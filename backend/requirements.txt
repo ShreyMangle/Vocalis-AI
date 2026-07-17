@@ -12,3 +12,4 @@ pydantic
 pydantic-settings
 groq
 edge-tts
+twilio
