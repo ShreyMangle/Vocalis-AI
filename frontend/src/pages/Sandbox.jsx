@@ -340,6 +340,11 @@ export default function Sandbox() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Settings Panel */}
         <div className="glass rounded-xl p-5 border border-slate-700/50 space-y-4 h-fit">
+          <div className="bg-indigo-600/10 border border-indigo-500/20 rounded-lg p-3 text-[11px] text-indigo-300">
+            <span className="font-semibold block mb-1">⚡ Complete Free Stack Active:</span>
+            Runs completely free using Groq (Llama 3.1 LLM & Whisper STT) + keyless Microsoft Edge Neural TTS voice.
+          </div>
+          
           <h3 className="text-lg font-semibold text-slate-200">Simulator Settings</h3>
           
           <div>
