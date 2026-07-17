@@ -66,7 +66,7 @@ export default function Sandbox() {
 
     // Backend trigger calls
     try {
-      const ws = new WebSocket(`wss://localhost:5000/twilio-stream?appointmentId=${selectedApptId}&callId=${dummyCallId}&sandbox=true`);
+      const ws = new WebSocket(`ws://localhost:5000/twilio-stream?appointmentId=${selectedApptId}&callId=${dummyCallId}&sandbox=true`);
       wsRef.current = ws;
 
       ws.onopen = () => {
