@@ -23,6 +23,24 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     await init_db()
+    print("=" * 60)
+    print("VOCALIS AI VOICE PLATFORM STARTED")
+    print("=" * 60)
+    print("SQLite Fallback DB initialized successfully.")
+    
+    # Check loaded keys
+    groq_ok = "LOADED (Free LLM & STT)" if os.getenv("GROQ_API_KEY") else "MISSING (Using simulated mock logic)"
+    gemini_ok = "LOADED (Alternative LLM)" if os.getenv("GEMINI_API_KEY") else "MISSING"
+    grok_ok = "LOADED (Alternative LLM)" if os.getenv("XAI_API_KEY") else "MISSING"
+    anthropic_ok = "LOADED (Claude LLM)" if os.getenv("ANTHROPIC_API_KEY") else "MISSING"
+    edge_tts_ok = "ACTIVE (Free Keyless Speech)"
+    
+    print(f"Groq API Key (Llama/Whisper):  {groq_ok}")
+    print(f"Gemini API Key:               {gemini_ok}")
+    print(f"xAI Grok API Key:             {grok_ok}")
+    print(f"Anthropic API Key:            {anthropic_ok}")
+    print(f"Edge Speech TTS Engine:       {edge_tts_ok}")
+    print("=" * 60)
 
 # Pydantic Schemas
 class RegisterSchema(BaseModel):
