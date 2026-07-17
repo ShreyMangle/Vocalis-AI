@@ -201,34 +201,23 @@ export default function Sandbox() {
     for (let i = 0; i < binary.length; i++) {
       bytes[i] = binary.charCodeAt(i);
     }
-    
-    // Append to accumulator ref
-    const current = mp3AccumulatorRef.current;
-    const newBuf = new Uint8Array(current.length + bytes.length);
-    newBuf.set(current, 0);
-    newBuf.set(bytes, current.length);
-    mp3AccumulatorRef.current = newBuf;
 
     try {
-      const sliceBuf = mp3AccumulatorRef.current.buffer.slice(0);
-      
       if (!audioCtxRef.current) {
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
         audioCtxRef.current = new AudioContextClass();
       }
       
       const audioCtx = audioCtxRef.current;
-      const audioBuffer = await audioCtx.decodeAudioData(sliceBuf);
+      const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
       
-      // Decoded successfully! Clean buffer and push to decoded queue
-      mp3AccumulatorRef.current = new Uint8Array(0);
       decodedQueueRef.current.push(audioBuffer);
       
       if (!isPlayingMp3Ref.current) {
         playNextDecodedBuffer();
       }
     } catch (err) {
-      // Keep accumulating bytes
+      console.error('Failed to decode MP3 sentence buffer:', err);
     }
   };
 

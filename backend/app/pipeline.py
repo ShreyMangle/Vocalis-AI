@@ -456,22 +456,22 @@ async def speak_sentence(ws: WebSocket, session: CallSession, text: str, is_sand
         # Audio streaming task
         async def stream_task():
             try:
-                # Accumulate MP3 audio blocks and stream base64 encoded chunks
+                # Accumulate the complete MP3 voice file on server
+                full_audio = bytearray()
                 async for chunk in communicate.stream():
                     if chunk["type"] == "audio":
-                        audio_data = chunk["data"]
-                        base64_mp3 = base64.b64encode(audio_data).decode("utf-8")
+                        full_audio.extend(chunk["data"])
                         
-                        if is_sandbox:
-                            # Sandbox receives MP3 frames
-                            await ws.send_json({
-                                "event": "sandbox_audio_mp3",
-                                "payload": base64_mp3
-                            })
-                        elif session.stream_sid:
-                            # Twilio requires 8000Hz mulaw (requires Azure Cognitive speech or pydub decoder).
-                            # We write mock/empty for Twilio mulaw fallback if no Deepgram key is present.
-                            pass
+                if full_audio:
+                    base64_mp3 = base64.b64encode(full_audio).decode("utf-8")
+                    if is_sandbox:
+                        # Sandbox receives the complete voice sentence
+                        await ws.send_json({
+                            "event": "sandbox_audio_mp3",
+                            "payload": base64_mp3
+                        })
+                    elif session.stream_sid:
+                        pass
                             
                 session.is_speaking = False
             except asyncio.CancelledError:
