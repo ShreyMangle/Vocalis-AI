@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+websockets
+anthropic
+deepgram-sdk
+pyjwt
+passlib[bcrypt]
+cryptography
+python-dotenv
+aiosqlite
+pydantic
+pydantic-settings
+groq
+edge-tts
