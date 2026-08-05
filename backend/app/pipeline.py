@@ -85,6 +85,14 @@ class CallSession:
         self.business_name = appointment["business_name"]
         self.available_slots = slots
         
+        # Agent Settings
+        self.agent_name = appointment.get("agent_name") or "Sarah"
+        self.voice_id = appointment.get("voice_id") or "en-US-AriaNeural"
+        self.custom_greeting = appointment.get("custom_greeting") or ""
+        self.business_faqs = appointment.get("business_faqs") or ""
+        self.webhook_url = appointment.get("webhook_url") or ""
+        self.sms_enabled = appointment.get("sms_enabled", 1)
+        
         self.conversation_history = []
         self.current_state = "greeting" # greeting, confirming, rescheduling, completed, cancelled, escalated
         self.stream_sid = None
@@ -114,7 +122,7 @@ async def handle_pipeline_websocket(ws: WebSocket, appointment_id: str, call_id:
     print(f"WebSocket connected. CallId: {call_id}. Sandbox: {is_sandbox}")
     
     appt_rows = await query_db(
-        """SELECT a.*, b.name as business_name, b.timezone 
+        """SELECT a.*, b.name as business_name, b.timezone, b.agent_name, b.voice_id, b.custom_greeting, b.business_faqs, b.webhook_url, b.sms_enabled 
            FROM appointments a 
            JOIN businesses b ON a.business_id = b.id 
            WHERE a.id = ?""",
@@ -132,7 +140,16 @@ async def handle_pipeline_websocket(ws: WebSocket, appointment_id: str, call_id:
     active_sessions[call_id] = session
 
     # Say greeting
-    greeting_text = f"Hi {session.customer_name}, this is the scheduling assistant for {session.business_name}. I'm calling to confirm your upcoming appointment scheduled for {format_time(session.appointment_time)}. Will you be able to make it?"
+    if session.custom_greeting.strip():
+        greeting_text = session.custom_greeting.format(
+            customer_name=session.customer_name,
+            business_name=session.business_name,
+            appointment_time=format_time(session.appointment_time),
+            agent_name=session.agent_name
+        )
+    else:
+        greeting_text = f"Hi {session.customer_name}, this is {session.agent_name} calling from {session.business_name}. I'm following up to confirm your upcoming appointment on {format_time(session.appointment_time)}. Will you be able to make it?"
+        
     session.conversation_history.append({"role": "assistant", "content": greeting_text})
     
     asyncio.create_task(speak_sentence(ws, session, greeting_text, is_sandbox))
@@ -236,19 +253,22 @@ async def handle_customer_utterance(ws: WebSocket, session: CallSession, utteran
     session.conversation_history.append({"role": "user", "content": utterance})
     llm_start = asyncio.get_event_loop().time()
 
-    system_prompt = f"""You are a friendly scheduling assistant calling on behalf of {session.business_name}.
-Your ONLY goal on this call is to confirm, reschedule, or cancel the customer's upcoming appointment.
+    faqs_prompt = f"\nBusiness Knowledge Base & FAQs:\n{session.business_faqs}\n" if session.business_faqs.strip() else ""
+
+    system_prompt = f"""You are {session.agent_name}, a friendly Virtual Scheduling Assistant calling on behalf of {session.business_name}.
+Your primary goal on this call is to confirm, reschedule, or cancel the customer's upcoming appointment.
 Current customer name: {session.customer_name}
 Current appointment details: {format_time(session.appointment_time)}
-
+{faqs_prompt}
 Rules:
 1. Keep responses short and conversational. Focus on one or two sentences.
 2. If they confirm: say thank you and end the call. Execute the 'confirm_appointment' tool.
 3. If they want to reschedule: offer these available slots: {' or '.join([format_time(s) for s in session.available_slots])}. Ask if any work.
 4. If they pick a rescheduled slot: confirm the time, update using the 'reschedule_appointment' tool, and close.
 5. If they cancel: mark using the 'cancel_appointment' tool, express regret, and close.
-6. If intent is unclear: escalate using the 'escalate_to_human' tool, say a human staff will follow up, and close.
-Always execute the corresponding tool when a decision is reached."""
+6. If asked about business info/FAQs: answer using the Business Knowledge Base, then steer back to confirming the appointment.
+7. If intent is unclear or human assistance requested: escalate using the 'escalate_to_human' tool, say a human staff will follow up, and close.
+Always execute the corresponding tool when a final decision is reached."""
 
     tools = [
         {
@@ -444,11 +464,9 @@ async def speak_sentence(ws: WebSocket, session: CallSession, text: str, is_sand
     session.is_speaking = True
     tts_start = asyncio.get_event_loop().time()
 
-    # If sandbox is active, stream edge-tts (MP3 base64). 
-    # Edge-tts requires zero keys and sounds premium!
     try:
-        # Microsoft Edge voice Aria Neural
-        voice = "en-US-AriaNeural"
+        # Use business configured voice_id or default to Aria Neural
+        voice = session.voice_id or "en-US-AriaNeural"
         communicate = edge_tts.Communicate(text, voice)
         
         session.tts_timers.append(int((asyncio.get_event_loop().time() - tts_start) * 1000))
@@ -487,6 +505,66 @@ async def speak_sentence(ws: WebSocket, session: CallSession, text: str, is_sand
         # Text fallback
         if is_sandbox:
             await ws.send_json({"event": "sandbox_speak_text", "text": text})
+
+async def send_post_call_sms(session: CallSession, outcome: str):
+    if not session.sms_enabled:
+        return
+        
+    msg_body = f"Hello {session.customer_name}, this is {session.business_name}. "
+    if outcome in ["confirmed", "completed"]:
+        msg_body += f"Your appointment is confirmed for {format_time(session.appointment_time)}. Thank you!"
+    elif outcome == "rescheduled":
+        msg_body += f"Your appointment has been rescheduled to {format_time(session.appointment_time)}. See you then!"
+    elif outcome == "cancelled":
+        msg_body += f"Your appointment on {format_time(session.appointment_time)} has been cancelled. Contact us if you need to rebook."
+    else:
+        msg_body += f"Our office will reach out shortly regarding your booking for {format_time(session.appointment_time)}."
+
+    if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER:
+        try:
+            loop = asyncio.get_event_loop()
+            client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            await loop.run_in_executor(
+                None,
+                lambda: client.messages.create(
+                    body=msg_body,
+                    to=session.customer_phone,
+                    from_=TWILIO_PHONE_NUMBER
+                )
+            )
+            print(f"[TWILIO SMS SENT] To: {session.customer_phone}")
+        except Exception as e:
+            print(f"[TWILIO SMS ERROR] {e}")
+    else:
+        print(f"[POST-CALL SMS MOCK] To {session.customer_phone}: \"{msg_body}\"")
+
+async def dispatch_call_webhook(session: CallSession, outcome: str, duration: int, avg_stt: int, avg_llm: int, avg_tts: int):
+    if not session.webhook_url:
+        return
+        
+    payload = {
+        "event": "call.completed",
+        "call_id": session.call_id,
+        "business_id": session.business_id,
+        "customer_name": session.customer_name,
+        "customer_phone": session.customer_phone,
+        "appointment_id": session.appointment_id,
+        "outcome": outcome,
+        "duration_seconds": duration,
+        "transcript": session.conversation_history,
+        "metrics": {
+            "avg_stt_latency_ms": avg_stt,
+            "avg_llm_latency_ms": avg_llm,
+            "avg_tts_latency_ms": avg_tts
+        }
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.post(session.webhook_url, json=payload, timeout=5.0)
+            print(f"[WEBHOOK DISPATCHED] Status {res.status_code} to {session.webhook_url}")
+    except Exception as e:
+        print(f"[WEBHOOK ERROR] Failed to dispatch to {session.webhook_url}: {e}")
 
 async def close_call(call_id: str):
     if call_id not in active_sessions:
@@ -532,6 +610,10 @@ async def close_call(call_id: str):
         ]
     )
     print(f"Call {call_id} closed and stored.")
+
+    # Trigger post-call SMS & Webhook dispatches
+    asyncio.create_task(send_post_call_sms(session, outcome))
+    asyncio.create_task(dispatch_call_webhook(session, outcome, duration, avg_stt, avg_llm, avg_tts))
 
 def format_time(iso_str: str) -> str:
     try:
