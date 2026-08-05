@@ -43,3 +43,6 @@ Thumbs.db
 *.njsproj
 *.sln
 *.swp
+
+# Local project documentation
+PRODUCT_SPEC.md
