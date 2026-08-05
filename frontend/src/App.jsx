@@ -5,12 +5,14 @@ import Appointments from './pages/Appointments';
 import CallLogs from './pages/CallLogs';
 import Sandbox from './pages/Sandbox';
 import Billing from './pages/Billing';
+import Settings from './pages/Settings';
 import { 
   LayoutDashboard, 
   CalendarCheck, 
   PhoneIncoming, 
   Terminal, 
   CreditCard, 
+  Settings as SettingsIcon,
   LogOut, 
   User,
   Sparkles,
@@ -72,6 +74,8 @@ export default function App() {
         return <CallLogs />;
       case 'sandbox':
         return <Sandbox />;
+      case 'settings':
+        return <Settings />;
       case 'billing':
         return <Billing />;
       default:
@@ -139,6 +143,17 @@ export default function App() {
               }`}
             >
               <Terminal className="h-4.5 w-4.5" /> Live Sandbox
+            </button>
+
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition cursor-pointer ${
+                activeTab === 'settings'
+                  ? 'bg-blue-600/10 text-blue-400 border-l-2 border-blue-500'
+                  : 'text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'
+              }`}
+            >
+              <SettingsIcon className="h-4.5 w-4.5" /> Agent Settings
             </button>
 
             <button
