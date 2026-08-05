@@ -42,6 +42,12 @@ async def create_tables():
             plan TEXT DEFAULT 'free',
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
+            agent_name TEXT DEFAULT 'Sarah',
+            voice_id TEXT DEFAULT 'en-US-AriaNeural',
+            custom_greeting TEXT,
+            business_faqs TEXT,
+            webhook_url TEXT,
+            sms_enabled INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
         """CREATE TABLE IF NOT EXISTS appointments (
@@ -83,6 +89,21 @@ async def create_tables():
             await query_db(query)
         except Exception as e:
             print(f"Error creating table: {e}")
+
+    # Migrations for existing databases
+    migrations = [
+        "ALTER TABLE businesses ADD COLUMN agent_name TEXT DEFAULT 'Sarah'",
+        "ALTER TABLE businesses ADD COLUMN voice_id TEXT DEFAULT 'en-US-AriaNeural'",
+        "ALTER TABLE businesses ADD COLUMN custom_greeting TEXT",
+        "ALTER TABLE businesses ADD COLUMN business_faqs TEXT",
+        "ALTER TABLE businesses ADD COLUMN webhook_url TEXT",
+        "ALTER TABLE businesses ADD COLUMN sms_enabled INTEGER DEFAULT 1"
+    ]
+    for m in migrations:
+        try:
+            await query_db(m)
+        except Exception:
+            pass # Column already exists
 
 async def query_db(sql: str, params: list = []):
     global pg_pool, sqlite_db_path

@@ -68,6 +68,14 @@ class SlotCreateSchema(BaseModel):
 class PlanUpgradeSchema(BaseModel):
     plan: str
 
+class SettingsUpdateSchema(BaseModel):
+    agent_name: Optional[str] = "Sarah"
+    voice_id: Optional[str] = "en-US-AriaNeural"
+    custom_greeting: Optional[str] = ""
+    business_faqs: Optional[str] = ""
+    webhook_url: Optional[str] = ""
+    sms_enabled: Optional[int] = 1
+
 # ==========================================
 # WEB WEBHOOK & WEBSOCKET ROUTES
 # ==========================================
@@ -314,5 +322,36 @@ async def billing_checkout(payload: PlanUpgradeSchema, business_id: str = Depend
 async def billing_success(payload: PlanUpgradeSchema, business_id: str = Depends(get_current_business_id)):
     await query_db("UPDATE businesses SET plan = ? WHERE id = ?", [payload.plan, business_id])
     return {"success": True, "plan": payload.plan}
+
+# --- SETTINGS ---
+@api_router.get("/settings")
+async def get_settings(business_id: str = Depends(get_current_business_id)):
+    rows = await query_db("SELECT agent_name, voice_id, custom_greeting, business_faqs, webhook_url, sms_enabled FROM businesses WHERE id = ?", [business_id])
+    if not rows:
+        raise HTTPException(status_code=404, detail="Business settings not found")
+    return rows[0]
+
+@api_router.put("/settings")
+async def update_settings(payload: SettingsUpdateSchema, business_id: str = Depends(get_current_business_id)):
+    await query_db(
+        """UPDATE businesses SET
+            agent_name = ?,
+            voice_id = ?,
+            custom_greeting = ?,
+            business_faqs = ?,
+            webhook_url = ?,
+            sms_enabled = ?
+           WHERE id = ?""",
+        [
+            payload.agent_name or "Sarah",
+            payload.voice_id or "en-US-AriaNeural",
+            payload.custom_greeting or "",
+            payload.business_faqs or "",
+            payload.webhook_url or "",
+            1 if payload.sms_enabled else 0,
+            business_id
+        ]
+    )
+    return {"success": True, "message": "Agent settings updated successfully"}
 
 app.include_router(api_router)
