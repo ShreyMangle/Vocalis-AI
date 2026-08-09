@@ -13,3 +13,5 @@ pydantic-settings
 groq
 edge-tts
 twilio
+redis
+asyncpg
