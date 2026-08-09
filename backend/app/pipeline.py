@@ -9,6 +9,7 @@ import struct
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 from app.db import query_db
+from app.redis_client import save_session_state, remove_session_state, publish_call_event
 from anthropic import AsyncAnthropic
 from groq import AsyncGroq
 import edge_tts
@@ -559,12 +560,33 @@ async def dispatch_call_webhook(session: CallSession, outcome: str, duration: in
         }
     }
     
-    try:
-        async with httpx.AsyncClient() as client:
-            res = await client.post(session.webhook_url, json=payload, timeout=5.0)
-            print(f"[WEBHOOK DISPATCHED] Status {res.status_code} to {session.webhook_url}")
-    except Exception as e:
-        print(f"[WEBHOOK ERROR] Failed to dispatch to {session.webhook_url}: {e}")
+    import hmac
+    import hashlib
+
+    json_bytes = json.dumps(payload).encode("utf-8")
+    signature = hmac.new(JWT_SECRET.encode("utf-8"), json_bytes, hashlib.sha256).hexdigest()
+    
+    headers = {
+        "Content-Type": "application/json",
+        "X-Vocalis-Signature": f"sha256={signature}",
+        "User-Agent": "Vocalis-AI-Webhook-Dispatcher/1.0"
+    }
+
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.post(session.webhook_url, content=json_bytes, headers=headers, timeout=5.0)
+                if res.status_code < 400:
+                    print(f"[WEBHOOK DISPATCHED] Attempt {attempt}: Status {res.status_code} to {session.webhook_url}")
+                    break
+                else:
+                    print(f"[WEBHOOK WARN] Attempt {attempt}: Received status {res.status_code} from {session.webhook_url}")
+        except Exception as e:
+            print(f"[WEBHOOK ERROR] Attempt {attempt} failed for {session.webhook_url}: {e}")
+            
+        if attempt < max_retries:
+            await asyncio.sleep(2 ** attempt)
 
 async def close_call(call_id: str):
     if call_id not in active_sessions:
@@ -611,9 +633,17 @@ async def close_call(call_id: str):
     )
     print(f"Call {call_id} closed and stored.")
 
-    # Trigger post-call SMS & Webhook dispatches
+    # Trigger post-call SMS & Webhook dispatches and Redis Pub/Sub notification
     asyncio.create_task(send_post_call_sms(session, outcome))
     asyncio.create_task(dispatch_call_webhook(session, outcome, duration, avg_stt, avg_llm, avg_tts))
+    asyncio.create_task(publish_call_event("calls:events", {
+        "event": "call.completed",
+        "call_id": call_id,
+        "business_id": session.business_id,
+        "outcome": outcome,
+        "duration_seconds": duration
+    }))
+    asyncio.create_task(remove_session_state(call_id))
 
 def format_time(iso_str: str) -> str:
     try:
