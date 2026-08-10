@@ -10,6 +10,7 @@ import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 from app.db import query_db
 from app.redis_client import save_session_state, remove_session_state, publish_call_event
+from app.audio_utils import MulawVADDetector, mulaw_to_pcm16_bytes, calculate_mulaw_rms
 from anthropic import AsyncAnthropic
 from groq import AsyncGroq
 import edge_tts
@@ -100,7 +101,8 @@ class CallSession:
         self.is_speaking = False
         self.audio_task = None
         
-        # Audio buffering for Voice Activity Detection (VAD) / Whisper STT
+        # Audio buffering & VAD Engine (8kHz mulaw / 16kHz linear)
+        self.vad = MulawVADDetector(energy_threshold=600.0, silence_duration_ms=800)
         self.audio_buffer = bytearray()
         self.speaking_started = False
         self.silent_chunks = 0
@@ -171,21 +173,34 @@ async def handle_pipeline_websocket(ws: WebSocket, appointment_id: str, call_id:
                 payload = message["media"]["payload"] if event == "media" else message["payload"]
                 raw_chunk = base64.b64decode(payload)
                 
-                # VAD & Buffer process (only in sandbox linear16 mic streaming or if Groq Whisper is active)
-                # Twilio mulaw requires conversion to PCM for VAD calculation.
-                # In sandbox mode, audio is 16kHz linear16 (2 bytes per sample) which is natively supported by Whisper.
-                if is_sandbox and groq_client:
-                    rms = calculate_rms(raw_chunk)
+                if event == "media" and groq_client:
+                    # Twilio 8kHz mulaw voice stream processing via MulawVADDetector
+                    res = session.vad.process_chunk(raw_chunk)
                     
-                    # VAD energy threshold: 750 (adjust based on noise)
+                    if res["speech_started"]:
+                        print("[VAD Twilio] Customer speech started...")
+                        if session.is_speaking:
+                            print("[Barge-In Twilio] Interrupting speech...")
+                            session.is_speaking = False
+                            if session.audio_task:
+                                session.audio_task.cancel()
+                            if session.stream_sid:
+                                await ws.send_json({"event": "clear", "streamSid": session.stream_sid})
+                                
+                    if res["speech_ended"] and res["buffered_pcm"]:
+                        print("[VAD Twilio] Customer speech ended. Transcribing...")
+                        asyncio.create_task(run_whisper_stt(ws, session, res["buffered_pcm"], is_sandbox))
+                        
+                elif is_sandbox and groq_client:
+                    # Sandbox 16kHz linear PCM processing
+                    rms = calculate_rms(raw_chunk)
                     if rms > 750:
                         if not session.speaking_started:
                             session.speaking_started = True
-                            print("[VAD] User speaking started...")
+                            print("[VAD Sandbox] User speaking started...")
                             
-                            # Barge-In interruption: Stop AI playback if it is speaking
                             if session.is_speaking:
-                                print("[Barge-In] Interrupting speech...")
+                                print("[Barge-In Sandbox] Interrupting speech...")
                                 session.is_speaking = False
                                 if session.audio_task:
                                     session.audio_task.cancel()
@@ -197,19 +212,12 @@ async def handle_pipeline_websocket(ws: WebSocket, appointment_id: str, call_id:
                         if session.speaking_started:
                             session.audio_buffer.extend(raw_chunk)
                             session.silent_chunks += 1
-                            
-                            # 40 chunks * 20ms = 800ms of consecutive silence
                             if session.silent_chunks >= 40:
                                 session.speaking_started = False
                                 session.silent_chunks = 0
                                 pcm_data = bytes(session.audio_buffer)
                                 session.audio_buffer.clear()
-                                
-                                # Trigger background Whisper STT
                                 asyncio.create_task(run_whisper_stt(ws, session, pcm_data, is_sandbox))
-                else:
-                    # In Twilio or when no Groq client is configured, we fall back to sandbox text input or standard streams
-                    pass
 
     except WebSocketDisconnect:
         pass
