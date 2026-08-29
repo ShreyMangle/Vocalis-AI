@@ -1,55 +1,74 @@
 # Vocalis AI - Automated Voice Agent Platform
 
-Vocalis AI is a full-stack, open-source AI voice agent platform designed for small businesses (dental clinics, salons, auto shops) to reduce appointment no-shows. The platform automatically places outbound calls to confirm, reschedule, or cancel upcoming appointments—replacing rigid phone trees with a real-time, natural spoken conversation.
+Vocalis AI is a full-stack, production-grade AI voice agent platform designed for small and medium businesses (dental clinics, wellness spas, salons, auto shops) to eliminate appointment no-shows. The platform automatically places outbound calls to confirm, reschedule, or cancel upcoming appointments—replacing rigid interactive voice response (IVR) phone trees with sub-second, natural spoken conversation.
 
-To make local development and portfolio showcases friction-free, **this version runs entirely on free, developer-tier, or keyless API services** and includes a built-in **Web Sandbox Call Simulator** that streams audio directly from your browser's microphone.
+To make local development and portfolio showcases friction-free, **this version runs entirely on free, developer-tier, or keyless API services** and includes a built-in **Web Sandbox Call Simulator** that streams bidirectional audio directly from your browser's microphone with a real-time neon spectrogram visualizer.
 
 ---
 
 ## 🚀 Key Features
 
-* **Visual ROI Analytics Dashboard**: Tracks confirmed, rescheduled, and cancelled appointments. Estimates "No-shows prevented" and "Recovered revenue" based on custom appointment values.
+* **Visual ROI Analytics & Business Value Simulator**:
+  * Tracks confirmed, rescheduled, and cancelled appointments in real time.
+  * Interactive booking value slider (`$50 - $500`) calculating custom annual recovered revenue and saved administrative hours.
 * **Blazing Fast Conversational Speech Pipeline**:
   * **Speech-to-Text (STT)**: Utterance-based recording using a local RMS Voice Activity Detector (VAD) coupled with Groq's free Whisper-large-v3 API (sub-150ms transcription).
-  * **LLM Orchestration**: Switches dynamically between Groq (Llama-3.1-70B), Google Gemini (1.5 Flash), xAI Grok, or Claude, handling live database scheduling modifications via function calling.
-  * **Text-to-Speech (TTS)**: Microsoft Edge Neural TTS voice integration—completely keyless, free, and premium-sounding.
-* **Web Sandbox Simulator**: Test the voice agent directly inside your browser! Connects via WebSockets, downsamples microphone inputs to 16kHz PCM, streams it, and decodes Edge TTS MP3 frames natively in the browser.
-* **CSV Bulk Importer**: paste appointment lists directly into the dashboard.
-* **Zero-Config Database**: Auto-bootstraps a local SQLite database by default, with PostgreSQL support available via a single configuration.
-* **Stripe Test Mode Billing**: Pricing plans table with Stripe checkout lifecycle hooks.
+  * **LLM Orchestration**: Switches dynamically between Groq (Llama-3.1-70B), Google Gemini (1.5 Flash), Anthropic Claude 3.5 Sonnet, and a fallback rule engine, handling live database scheduling modifications via function calling.
+  * **Text-to-Speech (TTS)**: Microsoft Edge Neural TTS voice integration—completely keyless, free, and ultra-natural with tunable speech rates (`-10%` to `+20%`).
+* **Live iCalendar (RFC 5545) Sync Feed**:
+  * Dedicated live URL subscription endpoint (`/api/calendar/{business_id}/feed.ics`) for Google Calendar, Apple Calendar, and Microsoft Outlook.
+* **Batch Outbound Reminder Campaigns**:
+  * One-click trigger or scheduled cron engine to dispatch 24h reminders across all pending appointments.
+* **Call Intelligence & Sentiment Analysis**:
+  * Automatic sentiment tagging (`Positive`, `Neutral`, `Urgent`, `Frustrated`) and intent extraction (`Confirmation`, `Reschedule`, `Cancellation`, `Human Escalation`).
+  * Instant CSV analytics and call history report export (`/api/calls/export.csv`).
+* **Web Voice Sandbox Simulator**:
+  * Test the voice agent directly inside your browser! Downsamples microphone inputs to 16kHz PCM, streams via WebSockets, and plays synthesized Edge TTS MP3 frames natively.
+  * Live neon audio spectrogram visualizer and downloadable call session audio (`.webm`).
+* **Multi-stage Docker & PostgreSQL/Redis Support**:
+  * Multi-stage production Dockerfiles with `docker-compose` stack configuring PostgreSQL 15, Redis 7, FastAPI, and Nginx.
 
 ---
 
 ## 📂 Project Architecture
 
 ```
-/hehe
-  ├── /backend                  # Python FastAPI WebSocket Server
+/vocalis-ai
+  ├── /backend                  # Python FastAPI WebSocket & REST Server
   │     ├── /app
   │     │     ├── __init__.py
-  │     │     ├── auth.py       # JWT tokens & Cryptography hashing
-  │     │     ├── db.py         # DB connector with SQLite auto-migrations
+  │     │     ├── audio_utils.py# G.711 µ-law transcoders & RMS VAD detector
+  │     │     ├── auth.py       # JWT tokens & Bcrypt cryptography hashing
+  │     │     ├── db.py         # DB connector (SQLite fallback + PostgreSQL asyncpg)
   │     │     ├── main.py       # FastAPI router endpoints & HTTP Server
-  │     │     └── pipeline.py   # WebSockets pipeline (STT ↔ LLM ↔ TTS)
-  │     ├── requirements.txt    # Python dependencies (Groq, Edge-TTS, FastAPI)
-  │     ├── test_pipeline.py    # Isolated pipeline validator script
-  │     └── .env                # Server API key configurations
+  │     │     ├── pipeline.py   # WebSockets pipeline (STT ↔ LLM ↔ TTS)
+  │     │     └── redis_client.py # Redis session store & Pub/Sub event dispatcher
+  │     ├── /tests              # Pytest automated test suite
+  │     │     ├── test_api.py   # Asynchronous API integration test lifecycle
+  │     │     ├── test_audio.py # Audio transcoder & VAD state machine tests
+  │     │     └── test_auth.py  # Authentication and JWT decoding tests
+  │     ├── Dockerfile          # Backend container image
+  │     ├── requirements.txt    # Python dependencies (FastAPI, Edge-TTS, Twilio, Redis)
+  │     └── pytest.ini          # Asyncio test configuration
   │
   ├── /frontend                 # Vite React + Tailwind CSS v4 Dashboard
   │     ├── /src
   │     │     ├── /pages
-  │     │     │     ├── Appointments.jsx  # Appointments lists and CSV loader
-  │     │     │     ├── Billing.jsx       # Pricing tiers and checkout
-  │     │     │     ├── Dashboard.jsx     # Recharts and recovered revenue calculators
-  │     │     │     ├── CallLogs.jsx      # Historical transcripts drawer & latency stats
-  │     │     │     ├── Login.jsx         # Access portals
-  │     │     │     └── Sandbox.jsx       # Web voice simulator (mic + player)
-  │     │     ├── App.jsx       # Sidebars layout and routing
-  │     │     ├── index.css     # Tailwind v4 glassmorphic styles
-  │     │     └── main.jsx      # DOM entry point
-  │     ├── package.json        # Frontend scripts and assets libraries
-  │     └── vite.config.js      # Bundler config containing Tailwind
+  │     │     │     ├── Appointments.jsx  # Appointments manager, iCal sync & batch dispatcher
+  │     │     │     ├── Billing.jsx       # Pricing tiers, annual discount toggle & checkout
+  │     │     │     ├── CallLogs.jsx      # Conversation transcripts, sentiment & CSV exporter
+  │     │     │     ├── Dashboard.jsx     # Recharts, ROI slider & latency telemetry
+  │     │     │     ├── Login.jsx         # Authentication portal
+  │     │     │     ├── Sandbox.jsx       # Web voice simulator & spectrogram visualizer
+  │     │     │     └── Settings.jsx      # Persona tuning, voice preview & VAD controls
+  │     │     ├── App.jsx       # Layout, navigation tabs & user state
+  │     │     └── index.css     # Glassmorphic cyber theme styles
+  │     ├── Dockerfile          # Multi-stage Nginx container image
+  │     ├── package.json        # Frontend scripts and Lucide icons
+  │     └── vite.config.ts      # Bundler config
   │
+  ├── docker-compose.yml        # PostgreSQL 15, Redis 7, Backend & Frontend stack
+  ├── PRODUCT_SPEC.md           # Product & SaaS Specification
   └── README.md                 # Project handbook
 ```
 
@@ -79,69 +98,34 @@ GROQ_API_KEY=gsk_...
 # Optional - alternative LLMs
 GEMINI_API_KEY=
 XAI_API_KEY=
+ANTHROPIC_API_KEY=
 
 # Optional - for real phone calls
 TWILIO_ACCOUNT_SID=
 TWILIO_AUTH_TOKEN=
 TWILIO_PHONE_NUMBER=
 ```
-*Note: If no API keys are provided, the server will operate in a simulated mock mode, letting you experience the system visually.*
-
-### 🔑 How to Obtain the API Keys
-
-Here is where to register and how to get each key for the platform:
-
-#### 1. Groq API Key (`GROQ_API_KEY`) — *Recommended & Free*
-* **Purpose**: Runs Llama-3.1-70B for the conversation logic + Whisper-large-v3 for low-latency Speech-to-Text.
-* **Cost**: **100% Free** (developer tier).
-* **Link**: [Groq Console](https://console.groq.com/)
-* **Steps**: Create an account, click **API Keys** in the sidebar, and click **Create API Key**.
-
-#### 2. Google Gemini API Key (`GEMINI_API_KEY`) — *Free LLM Alternative*
-* **Purpose**: Alternative free LLM brain option.
-* **Cost**: **100% Free** (pay-as-you-go developer trial).
-* **Link**: [Google AI Studio](https://aistudio.google.com/)
-* **Steps**: Sign in with your Google Account and click **Get API Key** in the top left.
-
-#### 3. xAI Grok Key (`XAI_API_KEY`)
-* **Purpose**: Alternative Grok LLM brain option.
-* **Cost**: Paid (trial credits occasionally offered).
-* **Link**: [xAI Console](https://console.x.ai/)
-* **Steps**: Register, create an API key, and configure billing.
-
-#### 4. Twilio Telephony Credentials — *For Real Phone Calls*
-* **Purpose**: Placing outbound calls to actual cell phones.
-* **Cost**: Free trial credit (~$15) upon registration, then pay-per-minute.
-* **Link**: [Twilio Console](https://www.twilio.com/console)
-* **Steps**:
-  1. Copy the **Account SID** and **Auth Token** from the dashboard landing page.
-  2. Click **Get a Trial Number** to claim an active caller phone number.
-
-#### 5. Stripe Billing Keys — *For Subscriptions Demo*
-* **Purpose**: Charging customers via Stripe Checkout sessions.
-* **Cost**: **Free** in developer Test Mode.
-* **Link**: [Stripe Dashboard](https://dashboard.stripe.com/)
-* **Steps**: Enable **Test Mode** on the top right, navigate to **Developers -> API Keys**, and copy the **Publishable key** and **Secret key**.
+*Note: If no API keys are provided, the server operates in a zero-downtime simulated mock mode, letting you experience the full system visually.*
 
 ---
 
-### Step 2: Install Backend Packages
-Install the Python dependencies:
+### Step 2: Install Backend Packages & Run Tests
+Install Python dependencies:
 
 ```bash
 cd backend
 pip install -r requirements.txt
 ```
 
-Verify that the backend initializes and logs test DB seeds successfully by running the pipeline validator:
+Run the automated test suite:
 ```bash
-python test_pipeline.py
+pytest -v
 ```
 
 ---
 
 ### Step 3: Install Frontend Packages
-Navigate to `/frontend` and install the package assets:
+Navigate to `/frontend` and install package dependencies:
 
 ```bash
 cd ../frontend
@@ -155,15 +139,15 @@ npm install
 You will need to open two terminal windows (one for the backend, one for the frontend):
 
 ### 1. Launch Backend Server
-In the `/backend` folder, run the Uvicorn server:
+In the `/backend` folder:
 ```bash
 cd backend
 uvicorn app.main:app --port 5000 --reload
 ```
-*The server will boot on `http://localhost:5000`, generating `backend/data/database.sqlite` automatically.*
+*The server boots on `http://localhost:5000`, auto-bootstrapping `backend/data/database.sqlite`.*
 
 ### 2. Launch Frontend Client
-In the `/frontend` folder, run the Vite development server:
+In the `/frontend` folder:
 ```bash
 cd frontend
 npm run dev
@@ -174,13 +158,13 @@ npm run dev
 
 ## 🎯 How to Test it (Voice Sandbox)
 
-1. Register a new business account on the Login screen.
-2. Navigate to **Appointments** and add an appointment manually (e.g. name: `Bob`, phone: `+123456`, time: tomorrow).
-3. Navigate to the **Live Sandbox** page.
-4. Select `Bob` from the dropdown list.
+1. Register an account or sign in on the Login screen.
+2. Navigate to **Appointments** and add an appointment (e.g. name: `Alice`, phone: `+1555123456`, time: tomorrow).
+3. Navigate to **Live Sandbox**.
+4. Select `Alice` from the dropdown list.
 5. Choose your input mode:
-   * **Voice Mode**: Speak directly into your computer's microphone. The server VAD will detect when you stop talking and transcribe it.
-   * **Text Mode (Fallback)**: Type your replies in the console input bar and press enter.
+   * **Voice Mode**: Speak into your microphone. The VAD and spectrogram visualizer will track your voice in real time.
+   * **Text Mode (Fallback)**: Type responses in the console input bar and press enter.
 6. Click **Start Simulated Call**.
 7. The AI virtual assistant will say the greeting. Converse with it to confirm, cancel, or reschedule.
-8. Hang up and check **Call History** to see the turn-by-turn dialogue transcripts and sub-second latency analytics!
+8. Hang up and click **Download Session Recording** or inspect **Call History** to see conversation transcripts, sentiment analysis, and latency breakdowns!
