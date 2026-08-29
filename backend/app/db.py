@@ -74,6 +74,9 @@ async def create_tables():
             stt_latency_ms INTEGER DEFAULT 0,
             llm_latency_ms INTEGER DEFAULT 0,
             tts_latency_ms INTEGER DEFAULT 0,
+            sentiment TEXT DEFAULT 'Neutral',
+            intent TEXT DEFAULT 'Confirmation',
+            notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
         """CREATE TABLE IF NOT EXISTS available_slots (
@@ -97,7 +100,12 @@ async def create_tables():
         "ALTER TABLE businesses ADD COLUMN custom_greeting TEXT",
         "ALTER TABLE businesses ADD COLUMN business_faqs TEXT",
         "ALTER TABLE businesses ADD COLUMN webhook_url TEXT",
-        "ALTER TABLE businesses ADD COLUMN sms_enabled INTEGER DEFAULT 1"
+        "ALTER TABLE businesses ADD COLUMN sms_enabled INTEGER DEFAULT 1",
+        "ALTER TABLE businesses ADD COLUMN speech_speed TEXT DEFAULT '+0%'",
+        "ALTER TABLE businesses ADD COLUMN vad_sensitivity TEXT DEFAULT 'normal'",
+        "ALTER TABLE calls ADD COLUMN sentiment TEXT DEFAULT 'Neutral'",
+        "ALTER TABLE calls ADD COLUMN intent TEXT DEFAULT 'Confirmation'",
+        "ALTER TABLE calls ADD COLUMN notes TEXT"
     ]
     for m in migrations:
         try:

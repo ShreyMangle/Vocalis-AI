@@ -16,7 +16,7 @@ from groq import AsyncGroq
 import edge_tts
 from twilio.rest import Client as TwilioClient
 
-# Load API keys
+# Load API keys & secrets
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 XAI_API_KEY = os.getenv("XAI_API_KEY", "")
@@ -25,6 +25,7 @@ TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "")
 APP_HOST = os.getenv("APP_HOST", "localhost:5000")
+JWT_SECRET = os.getenv("JWT_SECRET", "vocalis-production-jwt-secret-key-98765")
 
 # Initialize SDK clients
 anthropic_client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
@@ -94,6 +95,8 @@ class CallSession:
         self.business_faqs = appointment.get("business_faqs") or ""
         self.webhook_url = appointment.get("webhook_url") or ""
         self.sms_enabled = appointment.get("sms_enabled", 1)
+        self.speech_speed = appointment.get("speech_speed") or "+0%"
+        self.vad_sensitivity = appointment.get("vad_sensitivity") or "normal"
         
         self.conversation_history = []
         self.current_state = "greeting" # greeting, confirming, rescheduling, completed, cancelled, escalated
@@ -101,8 +104,14 @@ class CallSession:
         self.is_speaking = False
         self.audio_task = None
         
-        # Audio buffering & VAD Engine (8kHz mulaw / 16kHz linear)
-        self.vad = MulawVADDetector(energy_threshold=600.0, silence_duration_ms=800)
+        # Audio buffering & VAD Engine configured by sensitivity
+        if self.vad_sensitivity == "high":
+            self.vad = MulawVADDetector(energy_threshold=400.0, silence_duration_ms=600)
+        elif self.vad_sensitivity == "low":
+            self.vad = MulawVADDetector(energy_threshold=900.0, silence_duration_ms=1100)
+        else:
+            self.vad = MulawVADDetector(energy_threshold=600.0, silence_duration_ms=800)
+            
         self.audio_buffer = bytearray()
         self.speaking_started = False
         self.silent_chunks = 0
@@ -125,7 +134,9 @@ async def handle_pipeline_websocket(ws: WebSocket, appointment_id: str, call_id:
     print(f"WebSocket connected. CallId: {call_id}. Sandbox: {is_sandbox}")
     
     appt_rows = await query_db(
-        """SELECT a.*, b.name as business_name, b.timezone, b.agent_name, b.voice_id, b.custom_greeting, b.business_faqs, b.webhook_url, b.sms_enabled 
+        """SELECT a.*, b.name as business_name, b.timezone, b.agent_name, b.voice_id, 
+                  b.custom_greeting, b.business_faqs, b.webhook_url, b.sms_enabled, 
+                  b.speech_speed, b.vad_sensitivity 
            FROM appointments a 
            JOIN businesses b ON a.business_id = b.id 
            WHERE a.id = ?""",
@@ -476,7 +487,8 @@ async def speak_sentence(ws: WebSocket, session: CallSession, text: str, is_sand
     try:
         # Use business configured voice_id or default to Aria Neural
         voice = session.voice_id or "en-US-AriaNeural"
-        communicate = edge_tts.Communicate(text, voice)
+        rate = session.speech_speed or "+0%"
+        communicate = edge_tts.Communicate(text, voice, rate=rate)
         
         session.tts_timers.append(int((asyncio.get_event_loop().time() - tts_start) * 1000))
         
@@ -514,6 +526,34 @@ async def speak_sentence(ws: WebSocket, session: CallSession, text: str, is_sand
         # Text fallback
         if is_sandbox:
             await ws.send_json({"event": "sandbox_speak_text", "text": text})
+
+def extract_call_insights(transcript: list, outcome: str):
+    text = " ".join([m.get("content", "") for m in transcript]).lower()
+    
+    # Sentiment Extraction
+    if any(w in text for w in ["angry", "stop calling", "annoyed", "frustrated", "hate", "terrible", "remove me", "don't call"]):
+        sentiment = "Frustrated"
+    elif any(w in text for w in ["urgent", "emergency", "asap", "pain", "immediately"]):
+        sentiment = "Urgent"
+    elif any(w in text for w in ["great", "thanks", "thank you", "perfect", "awesome", "wonderful", "appreciate", "definitely", "yes"]):
+        sentiment = "Positive"
+    else:
+        sentiment = "Neutral"
+        
+    # Intent Extraction
+    if outcome in ["confirmed", "completed"] or "confirm" in text:
+        intent = "Confirmation"
+    elif outcome == "rescheduled" or "reschedule" in text or "rebook" in text:
+        intent = "Reschedule"
+    elif outcome == "cancelled" or "cancel" in text:
+        intent = "Cancellation"
+    elif outcome == "escalated" or "receptionist" in text or "human" in text:
+        intent = "Human Escalation"
+    else:
+        intent = "General Inquiry"
+        
+    notes = f"{intent} finished with {sentiment.lower()} customer tone. Status: {outcome}."
+    return sentiment, intent, notes
 
 async def send_post_call_sms(session: CallSession, outcome: str):
     if not session.sms_enabled:
@@ -616,6 +656,8 @@ async def close_call(call_id: str):
     if outcome == "completed":
         outcome = "confirmed"
         
+    sentiment, intent, notes = extract_call_insights(session.conversation_history, outcome)
+        
     await query_db(
         """UPDATE calls SET 
             ended_at = ?,
@@ -625,7 +667,10 @@ async def close_call(call_id: str):
             cost_cents = ?,
             stt_latency_ms = ?,
             llm_latency_ms = ?,
-            tts_latency_ms = ?
+            tts_latency_ms = ?,
+            sentiment = ?,
+            intent = ?,
+            notes = ?
            WHERE id = ?""",
         [
             iso_ended,
@@ -636,10 +681,13 @@ async def close_call(call_id: str):
             avg_stt,
             avg_llm,
             avg_tts,
+            sentiment,
+            intent,
+            notes,
             call_id
         ]
     )
-    print(f"Call {call_id} closed and stored.")
+    print(f"Call {call_id} closed and stored with sentiment '{sentiment}' and intent '{intent}'.")
 
     # Trigger post-call SMS & Webhook dispatches and Redis Pub/Sub notification
     asyncio.create_task(send_post_call_sms(session, outcome))
