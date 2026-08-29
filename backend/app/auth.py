@@ -5,7 +5,7 @@ from fastapi import HTTPException, Security, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import bcrypt
 
-JWT_SECRET = os.getenv("JWT_SECRET", "hehe-voice-agent-secret-key-12345")
+JWT_SECRET = os.getenv("JWT_SECRET", "vocalis-production-jwt-secret-key-98765")
 ALGORITHM = "HS256"
 
 security = HTTPBearer()
@@ -30,6 +30,13 @@ def create_access_token(user_id: str, expires_delta: timedelta = None) -> str:
     to_encode = {"userId": user_id, "exp": expire}
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
     return encoded_jwt
+
+def decode_access_token(token: str) -> str:
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
+        return payload.get("userId")
+    except Exception:
+        return None
 
 def get_current_business_id(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
     token = credentials.credentials
