@@ -75,6 +75,8 @@ class SettingsUpdateSchema(BaseModel):
     business_faqs: Optional[str] = ""
     webhook_url: Optional[str] = ""
     sms_enabled: Optional[int] = 1
+    speech_speed: Optional[str] = "+0%"
+    vad_sensitivity: Optional[str] = "normal"
 
 # ==========================================
 # WEB WEBHOOK & WEBSOCKET ROUTES
@@ -222,6 +224,72 @@ async def trigger_call(appt_id: str, business_id: str = Depends(get_current_busi
     call_id = await trigger_voice_call(appt)
     return {"success": True, "callId": call_id}
 
+# --- CALENDAR INTEGRATION ---
+@api_router.get("/calendar/{business_id}/feed.ics")
+async def get_calendar_feed(business_id: str, token: Optional[str] = None):
+    # Verify business exists
+    biz_rows = await query_db("SELECT id, name FROM businesses WHERE id = ?", [business_id])
+    if not biz_rows:
+        raise HTTPException(status_code=404, detail="Business not found")
+    business = biz_rows[0]
+
+    appts = await query_db(
+        "SELECT * FROM appointments WHERE business_id = ? ORDER BY scheduled_at ASC",
+        [business_id]
+    )
+
+    now_stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    
+    ics_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Vocalis AI//Voice Scheduling Agent//EN",
+        f"X-WR-CALNAME:Vocalis - {business['name']}",
+        "X-WR-TIMEZONE:UTC",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH"
+    ]
+
+    for appt in appts:
+        try:
+            # Parse ISO time
+            raw_time = appt["scheduled_at"].replace("Z", "+00:00")
+            dt = datetime.fromisoformat(raw_time)
+            dt_start = dt.strftime("%Y%m%dT%H%M%SZ")
+            dt_end = (dt + timedelta(minutes=45)).strftime("%Y%m%dT%H%M%SZ")
+        except Exception:
+            continue
+
+        status_map = {
+            "confirmed": "CONFIRMED",
+            "rescheduled": "CONFIRMED",
+            "cancelled": "CANCELLED",
+            "pending": "TENTATIVE"
+        }
+        cal_status = status_map.get(appt["status"], "TENTATIVE")
+        status_label = appt["status"].upper()
+
+        ics_lines.extend([
+            "BEGIN:VEVENT",
+            f"UID:appt_{appt['id']}@vocalis.ai",
+            f"DTSTAMP:{now_stamp}",
+            f"DTSTART:{dt_start}",
+            f"DTEND:{dt_end}",
+            f"SUMMARY:{appt['customer_name']} - Appointment ({status_label})",
+            f"DESCRIPTION:Customer: {appt['customer_name']}\\nPhone: {appt['customer_phone']}\\nStatus: {appt['status']}\\nAI Managed by Vocalis",
+            f"STATUS:{cal_status}",
+            "END:VEVENT"
+        ])
+
+    ics_lines.append("END:VCALENDAR")
+    ics_content = "\r\n".join(ics_lines) + "\r\n"
+
+    return Response(
+        content=ics_content,
+        media_type="text/calendar",
+        headers={"Content-Disposition": f'attachment; filename="vocalis_{business_id}.ics"'}
+    )
+
 # --- AVAILABLE SLOTS ---
 @api_router.get("/slots")
 async def get_slots(business_id: str = Depends(get_current_business_id)):
@@ -323,10 +391,98 @@ async def billing_success(payload: PlanUpgradeSchema, business_id: str = Depends
     await query_db("UPDATE businesses SET plan = ? WHERE id = ?", [payload.plan, business_id])
     return {"success": True, "plan": payload.plan}
 
+# --- CAMPAIGNS & REMINDERS BATCH ---
+@api_router.post("/campaigns/dispatch-reminders")
+async def dispatch_reminders_campaign(business_id: str = Depends(get_current_business_id)):
+    # Find all pending appointments for this business
+    appts = await query_db(
+        "SELECT * FROM appointments WHERE business_id = ? AND status = 'pending' ORDER BY scheduled_at ASC",
+        [business_id]
+    )
+    
+    if not appts:
+        return {"success": True, "count": 0, "message": "No pending appointments to call", "calls": []}
+        
+    dispatched = []
+    for appt in appts:
+        call_id = await trigger_voice_call(appt)
+        dispatched.append({
+            "appointment_id": appt["id"],
+            "customer_name": appt["customer_name"],
+            "customer_phone": appt["customer_phone"],
+            "call_id": call_id
+        })
+        
+    return {
+        "success": True,
+        "count": len(dispatched),
+        "message": f"Successfully triggered {len(dispatched)} outbound reminder call(s)",
+        "calls": dispatched
+    }
+
+# --- CALLS & HISTORY ---
+@api_router.get("/calls")
+async def get_calls(business_id: str = Depends(get_current_business_id)):
+    rows = await query_db(
+        """SELECT c.*, a.customer_name, a.customer_phone, a.scheduled_at 
+           FROM calls c
+           JOIN appointments a ON c.appointment_id = a.id
+           WHERE c.business_id = ?
+           ORDER BY c.created_at DESC""",
+        [business_id]
+    )
+    return rows
+
+@api_router.get("/calls/export.csv")
+async def export_calls_csv(business_id: str = Depends(get_current_business_id)):
+    rows = await query_db(
+        """SELECT c.id, c.started_at, c.outcome, c.sentiment, c.intent, c.duration_seconds, 
+                  c.stt_latency_ms, c.llm_latency_ms, c.tts_latency_ms, c.cost_cents,
+                  a.customer_name, a.customer_phone, a.scheduled_at
+           FROM calls c
+           JOIN appointments a ON c.appointment_id = a.id
+           WHERE c.business_id = ?
+           ORDER BY c.created_at DESC""",
+        [business_id]
+    )
+    
+    headers = [
+        "Call ID", "Customer Name", "Phone", "Scheduled Time", "Outcome", 
+        "Sentiment", "Intent", "Duration (s)", "STT (ms)", "LLM (ms)", "TTS (ms)", "Cost (cents)", "Timestamp"
+    ]
+    csv_rows = [",".join(headers)]
+    
+    for r in rows:
+        csv_rows.append(",".join([
+            f'"{r.get("id", "")}"',
+            f'"{r.get("customer_name", "")}"',
+            f'"{r.get("customer_phone", "")}"',
+            f'"{r.get("scheduled_at", "")}"',
+            f'"{r.get("outcome", "")}"',
+            f'"{r.get("sentiment", "Neutral")}"',
+            f'"{r.get("intent", "General")}"',
+            str(r.get("duration_seconds", 0)),
+            str(r.get("stt_latency_ms", 0)),
+            str(r.get("llm_latency_ms", 0)),
+            str(r.get("tts_latency_ms", 0)),
+            str(r.get("cost_cents", 0)),
+            f'"{r.get("started_at", "")}"'
+        ]))
+        
+    csv_body = "\r\n".join(csv_rows)
+    return Response(
+        content=csv_body,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="vocalis_call_history_{business_id}.csv"'}
+    )
+
 # --- SETTINGS ---
 @api_router.get("/settings")
 async def get_settings(business_id: str = Depends(get_current_business_id)):
-    rows = await query_db("SELECT agent_name, voice_id, custom_greeting, business_faqs, webhook_url, sms_enabled FROM businesses WHERE id = ?", [business_id])
+    rows = await query_db(
+        "SELECT agent_name, voice_id, custom_greeting, business_faqs, webhook_url, sms_enabled, speech_speed, vad_sensitivity FROM businesses WHERE id = ?",
+        [business_id]
+    )
     if not rows:
         raise HTTPException(status_code=404, detail="Business settings not found")
     return rows[0]
@@ -340,7 +496,9 @@ async def update_settings(payload: SettingsUpdateSchema, business_id: str = Depe
             custom_greeting = ?,
             business_faqs = ?,
             webhook_url = ?,
-            sms_enabled = ?
+            sms_enabled = ?,
+            speech_speed = ?,
+            vad_sensitivity = ?
            WHERE id = ?""",
         [
             payload.agent_name or "Sarah",
@@ -349,6 +507,8 @@ async def update_settings(payload: SettingsUpdateSchema, business_id: str = Depe
             payload.business_faqs or "",
             payload.webhook_url or "",
             1 if payload.sms_enabled else 0,
+            payload.speech_speed or "+0%",
+            payload.vad_sensitivity or "normal",
             business_id
         ]
     )
