@@ -10,7 +10,13 @@ import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 from app.db import query_db
 from app.redis_client import save_session_state, remove_session_state, publish_call_event
-from app.audio_utils import MulawVADDetector, mulaw_to_pcm16_bytes, calculate_mulaw_rms
+from app.audio_utils import (
+    MulawVADDetector, 
+    mulaw_to_pcm16_bytes, 
+    calculate_mulaw_rms, 
+    pcm16_to_mulaw_bytes, 
+    mp3_to_8khz_mulaw
+)
 from anthropic import AsyncAnthropic
 from groq import AsyncGroq
 import edge_tts
@@ -36,8 +42,8 @@ active_sessions = {}
 # Outbound Trigger
 async def trigger_voice_call(appointment: dict) -> str:
     call_id = "call_" + os.urandom(4).hex()
-    from datetime import datetime
-    iso_started = datetime.utcnow().isoformat() + "Z"
+    from datetime import datetime, timezone
+    iso_started = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     
     await query_db(
         """INSERT INTO calls (id, appointment_id, business_id, started_at, outcome, transcript, duration_seconds, cost_cents)
@@ -510,7 +516,27 @@ async def speak_sentence(ws: WebSocket, session: CallSession, text: str, is_sand
                             "payload": base64_mp3
                         })
                     elif session.stream_sid:
-                        pass
+                        # Transcode synthesized speech to 8kHz mu-law and stream chunks to Twilio
+                        mulaw_bytes = mp3_to_8khz_mulaw(bytes(full_audio))
+                        if mulaw_bytes:
+                            chunk_size = 160  # 20ms chunk at 8kHz
+                            for offset in range(0, len(mulaw_bytes), chunk_size):
+                                if not session.is_speaking:
+                                    break
+                                chunk = mulaw_bytes[offset:offset + chunk_size]
+                                b64_chunk = base64.b64encode(chunk).decode("utf-8")
+                                await ws.send_json({
+                                    "event": "media",
+                                    "streamSid": session.stream_sid,
+                                    "media": {"payload": b64_chunk}
+                                })
+                                await asyncio.sleep(0.02)
+                            if session.is_speaking:
+                                await ws.send_json({
+                                    "event": "mark",
+                                    "streamSid": session.stream_sid,
+                                    "mark": {"name": f"speech_{session.call_id}"}
+                                })
                             
                 session.is_speaking = False
             except asyncio.CancelledError:
@@ -641,8 +667,8 @@ async def close_call(call_id: str):
         return
         
     session = active_sessions.pop(call_id)
-    from datetime import datetime
-    iso_ended = datetime.utcnow().isoformat() + "Z"
+    from datetime import datetime, timezone
+    iso_ended = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     
     avg_stt = int(sum(session.stt_timers) / len(session.stt_timers)) if session.stt_timers else 150
     avg_llm = int(sum(session.llm_timers) / len(session.llm_timers)) if session.llm_timers else 450

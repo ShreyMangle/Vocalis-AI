@@ -16,10 +16,64 @@ for i in range(256):
     sample = max(-32768, min(32767, sample))
     MULAW_TO_PCM16.append(sample)
 
+# Pre-computed 16-bit linear PCM to G.711 mu-law lookup table (65536 entries)
+def _pcm16_to_mulaw_sample(pcm_val: int) -> int:
+    BIAS = 0x84
+    CLIP = 32635
+    sign = 0
+    if pcm_val < 0:
+        pcm_val = -pcm_val
+        sign = 0x80
+    if pcm_val > CLIP:
+        pcm_val = CLIP
+    pcm_val += BIAS
+    exponent = 7
+    mask = 0x4000
+    while (pcm_val & mask) == 0 and exponent > 0:
+        exponent -= 1
+        mask >>= 1
+    mantissa = (pcm_val >> (exponent + 3)) & 0x0F
+    return ~(sign | (exponent << 4) | mantissa) & 0xFF
+
+PCM16_TO_MULAW = bytes([_pcm16_to_mulaw_sample(i - 32768) for i in range(65536)])
+
 def mulaw_to_pcm16_bytes(mulaw_bytes: bytes) -> bytes:
     """Converts 8kHz G.711 mulaw byte stream directly into 16-bit PCM bytes."""
     pcm_samples = [MULAW_TO_PCM16[b] for b in mulaw_bytes]
     return struct.pack(f"<{len(pcm_samples)}h", *pcm_samples)
+
+def pcm16_to_mulaw_bytes(pcm_bytes: bytes) -> bytes:
+    """Converts 16-bit linear PCM byte stream to 8-bit G.711 mulaw byte stream."""
+    sample_count = len(pcm_bytes) // 2
+    if sample_count == 0:
+        return b""
+    shorts = struct.unpack(f"<{sample_count}h", pcm_bytes)
+    return bytes([PCM16_TO_MULAW[s + 32768] for s in shorts])
+
+def mp3_to_8khz_mulaw(mp3_bytes: bytes) -> bytes:
+    """
+    Transcodes MP3 audio into 8kHz mono G.711 mu-law audio for Twilio PSTN streaming.
+    Uses soundfile + scipy.signal for high quality anti-aliased resampling.
+    """
+    import io
+    try:
+        import soundfile as sf
+        import scipy.signal
+        import numpy as np
+
+        data, samplerate = sf.read(io.BytesIO(mp3_bytes))
+        if len(data.shape) > 1 and data.shape[1] > 1:
+            data = np.mean(data, axis=1)
+
+        if samplerate != 8000:
+            target_length = int(len(data) * 8000 / samplerate)
+            data = scipy.signal.resample(data, target_length)
+
+        pcm16 = np.clip(data * 32767, -32768, 32767).astype(np.int16)
+        return pcm16_to_mulaw_bytes(pcm16.tobytes())
+    except Exception as e:
+        print(f"Warning: mp3_to_8khz_mulaw transcoding failed: {e}")
+        return b""
 
 def calculate_mulaw_rms(mulaw_bytes: bytes) -> float:
     """Computes RMS audio energy directly from G.711 mulaw byte stream using precomputed lookup table."""

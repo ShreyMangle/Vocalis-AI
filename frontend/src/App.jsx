@@ -1,11 +1,13 @@
-import { useState, useEffect } from 'react';
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import Appointments from './pages/Appointments';
-import CallLogs from './pages/CallLogs';
-import Sandbox from './pages/Sandbox';
-import Billing from './pages/Billing';
-import Settings from './pages/Settings';
+import { useState, useEffect, lazy, Suspense } from 'react';
+
+const Login = lazy(() => import('./pages/Login'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Appointments = lazy(() => import('./pages/Appointments'));
+const CallLogs = lazy(() => import('./pages/CallLogs'));
+const Sandbox = lazy(() => import('./pages/Sandbox'));
+const Billing = lazy(() => import('./pages/Billing'));
+const Settings = lazy(() => import('./pages/Settings'));
+
 import { 
   LayoutDashboard, 
   CalendarCheck, 
@@ -61,7 +63,15 @@ export default function App() {
   };
 
   if (!token) {
-    return <Login onLoginSuccess={handleLoginSuccess} />;
+    return (
+      <Suspense fallback={
+        <div className="min-h-screen bg-[#0b0f17] flex items-center justify-center">
+          <div className="w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+      }>
+        <Login onLoginSuccess={handleLoginSuccess} />
+      </Suspense>
+    );
   }
 
   const renderContent = () => {
@@ -198,7 +208,13 @@ export default function App() {
       {/* Main content display */}
       <main className="flex-1 p-8 overflow-y-auto max-h-screen">
         <div className="max-w-6xl mx-auto">
-          {renderContent()}
+          <Suspense fallback={
+            <div className="flex items-center justify-center min-h-[50vh]">
+              <div className="w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          }>
+            {renderContent()}
+          </Suspense>
         </div>
       </main>
     </div>

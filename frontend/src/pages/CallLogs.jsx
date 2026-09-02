@@ -55,9 +55,25 @@ export default function CallLogs() {
     }
   };
 
-  const handleExportCsv = () => {
+  const handleExportCsv = async () => {
     const token = localStorage.getItem('token');
-    window.open(`http://localhost:5000/api/calls/export.csv`, '_blank');
+    try {
+      const res = await fetch(`http://localhost:5000/api/calls/export.csv?token=${token}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `vocalis_call_history_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      a.remove();
+    } catch {
+      window.open(`http://localhost:5000/api/calls/export.csv?token=${token}`, '_blank');
+    }
   };
 
   const getSentimentIcon = (sentiment) => {

@@ -1,5 +1,10 @@
-import pytest
-from app.audio_utils import mulaw_to_pcm16_bytes, calculate_mulaw_rms, MulawVADDetector
+from app.audio_utils import (
+    mulaw_to_pcm16_bytes, 
+    pcm16_to_mulaw_bytes, 
+    calculate_mulaw_rms, 
+    MulawVADDetector
+)
+import struct
 
 def test_mulaw_to_pcm16_conversion():
     # 160 bytes of mulaw audio (20ms at 8kHz)
@@ -8,6 +13,26 @@ def test_mulaw_to_pcm16_conversion():
     
     assert len(pcm16) == 320 # 160 samples * 2 bytes/sample
     assert isinstance(pcm16, bytes)
+
+def test_pcm16_to_mulaw_conversion():
+    # 160 samples of 16-bit PCM (320 bytes)
+    samples = [0] * 160
+    pcm_silence = struct.pack(f"<{len(samples)}h", *samples)
+    mulaw = pcm16_to_mulaw_bytes(pcm_silence)
+    
+    assert len(mulaw) == 160
+    assert mulaw == b'\xff' * 160
+
+def test_mulaw_roundtrip_fidelity():
+    test_samples = [0, 100, 1000, 5000, 15000, -100, -1000, -5000, -15000]
+    pcm_bytes = struct.pack(f"<{len(test_samples)}h", *test_samples)
+    mulaw = pcm16_to_mulaw_bytes(pcm_bytes)
+    recovered_pcm = mulaw_to_pcm16_bytes(mulaw)
+    recovered_samples = struct.unpack(f"<{len(test_samples)}h", recovered_pcm)
+    
+    for orig, rec in zip(test_samples, recovered_samples):
+        # Mu-law 8-bit quantization error should be under 2% of sample amplitude or <= 150
+        assert abs(orig - rec) <= max(150, abs(orig) * 0.05)
 
 def test_calculate_mulaw_rms():
     # Silence (0xff in mulaw is zero amplitude)

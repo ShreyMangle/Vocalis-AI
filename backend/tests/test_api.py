@@ -108,11 +108,16 @@ async def test_full_api_lifecycle():
         assert "roi" in stats_data
         assert "performance" in stats_data
 
-        # 10. Test Calls CSV Export (/api/calls/export.csv)
+        # 10. Test Calls CSV Export (/api/calls/export.csv with Bearer header)
         export_res = await ac.get("/api/calls/export.csv", headers=headers)
         assert export_res.status_code == 200
         assert "text/csv" in export_res.headers.get("content-type", "")
         assert "Call ID" in export_res.text
+
+        # 10b. Test Calls CSV Export with query param (?token=...)
+        export_query_res = await ac.get(f"/api/calls/export.csv?token={token}")
+        assert export_query_res.status_code == 200
+        assert "text/csv" in export_query_res.headers.get("content-type", "")
 
         # 11. Delete appointment
         del_res = await ac.delete(f"/api/appointments/{appt_id}", headers=headers)

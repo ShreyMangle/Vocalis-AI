@@ -1,6 +1,7 @@
 import os
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 from fastapi import HTTPException, Security, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import bcrypt
@@ -8,7 +9,8 @@ import bcrypt
 JWT_SECRET = os.getenv("JWT_SECRET", "vocalis-production-jwt-secret-key-98765")
 ALGORITHM = "HS256"
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=True)
+optional_security = HTTPBearer(auto_error=False)
 
 def hash_password(password: str) -> str:
     salt = bcrypt.gensalt()
@@ -23,9 +25,9 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def create_access_token(user_id: str, expires_delta: timedelta = None) -> str:
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(days=7)
+        expire = datetime.now(timezone.utc) + timedelta(days=7)
         
     to_encode = {"userId": user_id, "exp": expire}
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET, algorithm=ALGORITHM)
@@ -44,6 +46,29 @@ def get_current_business_id(credentials: HTTPAuthorizationCredentials = Security
         payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
         business_id: str = payload.get("userId")
         if business_id is None:
+            raise HTTPException(status_code=401, detail="Invalid auth token payload")
+        return business_id
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired authentication token")
+
+def resolve_business_id(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security),
+    token: Optional[str] = None
+) -> str:
+    """Resolves business ID from either Bearer Authorization header or ?token= query parameter."""
+    raw_token = None
+    if credentials and credentials.credentials:
+        raw_token = credentials.credentials
+    elif token:
+        raw_token = token
+
+    if not raw_token:
+        raise HTTPException(status_code=401, detail="Authentication token required")
+        
+    try:
+        payload = jwt.decode(raw_token, JWT_SECRET, algorithms=[ALGORITHM])
+        business_id = payload.get("userId")
+        if not business_id:
             raise HTTPException(status_code=401, detail="Invalid auth token payload")
         return business_id
     except jwt.PyJWTError:

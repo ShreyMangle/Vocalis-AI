@@ -1,27 +1,38 @@
 import os
+import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.db import init_db, query_db
-from app.auth import hash_password, verify_password, create_access_token, get_current_business_id
+from app.auth import hash_password, verify_password, create_access_token, get_current_business_id, resolve_business_id
 from app.pipeline import trigger_voice_call, handle_twilio_voice_xml, handle_pipeline_websocket
 
-app = FastAPI(title="Vocalis AI Voice Agent Platform Backend")
+async def periodic_reminder_scheduler():
+    """Background engine that periodically monitors pending appointments and dispatches calls if enabled."""
+    while True:
+        try:
+            await asyncio.sleep(3600)  # Checks hourly
+            now = datetime.now(timezone.utc)
+            in_24h = (now + timedelta(hours=24)).isoformat()
+            now_iso = now.isoformat()
+            due_appts = await query_db(
+                "SELECT * FROM appointments WHERE status = 'pending' AND scheduled_at BETWEEN ? AND ?",
+                [now_iso, in_24h]
+            )
+            for appt in due_appts:
+                print(f"[Auto-Campaign Scheduler] Dispatching automated reminder for appt {appt['id']} ({appt['customer_name']})")
+                await trigger_voice_call(appt)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[Auto-Campaign Scheduler] Error: {e}")
 
-# Enable CORS for frontend local development
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], # In production, restrict this to frontend domain
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     await init_db()
     print("=" * 60)
     print("VOCALIS AI VOICE PLATFORM STARTED")
@@ -41,6 +52,21 @@ async def startup_event():
     print(f"Anthropic API Key:            {anthropic_ok}")
     print(f"Edge Speech TTS Engine:       {edge_tts_ok}")
     print("=" * 60)
+
+    scheduler_task = asyncio.create_task(periodic_reminder_scheduler())
+    yield
+    scheduler_task.cancel()
+
+app = FastAPI(title="Vocalis AI Voice Agent Platform Backend", lifespan=lifespan)
+
+# Enable CORS for frontend local development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # In production, restrict this to frontend domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Pydantic Schemas
 class RegisterSchema(BaseModel):
@@ -124,7 +150,7 @@ async def register(payload: RegisterSchema):
     )
     
     # Create 3 default reschedule slots for demo
-    tomorrow = datetime.utcnow() + timedelta(days=1)
+    tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
     tomorrow_str = tomorrow.strftime("%Y-%m-%d")
     default_slots = [
         f"{tomorrow_str}T09:00:00Z",
@@ -238,7 +264,7 @@ async def get_calendar_feed(business_id: str, token: Optional[str] = None):
         [business_id]
     )
 
-    now_stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    now_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     
     ics_lines = [
         "BEGIN:VCALENDAR",
@@ -421,20 +447,8 @@ async def dispatch_reminders_campaign(business_id: str = Depends(get_current_bus
     }
 
 # --- CALLS & HISTORY ---
-@api_router.get("/calls")
-async def get_calls(business_id: str = Depends(get_current_business_id)):
-    rows = await query_db(
-        """SELECT c.*, a.customer_name, a.customer_phone, a.scheduled_at 
-           FROM calls c
-           JOIN appointments a ON c.appointment_id = a.id
-           WHERE c.business_id = ?
-           ORDER BY c.created_at DESC""",
-        [business_id]
-    )
-    return rows
-
 @api_router.get("/calls/export.csv")
-async def export_calls_csv(business_id: str = Depends(get_current_business_id)):
+async def export_calls_csv(business_id: str = Depends(resolve_business_id)):
     rows = await query_db(
         """SELECT c.id, c.started_at, c.outcome, c.sentiment, c.intent, c.duration_seconds, 
                   c.stt_latency_ms, c.llm_latency_ms, c.tts_latency_ms, c.cost_cents,
