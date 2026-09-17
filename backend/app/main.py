@@ -1,4 +1,12 @@
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+env_path = Path(__file__).resolve().parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
+load_dotenv()
+
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, APIRouter
@@ -109,22 +117,55 @@ class SettingsUpdateSchema(BaseModel):
 # ==========================================
 
 from fastapi.responses import HTMLResponse, Response
+from fastapi import Request
 
-@app.post("/api/twilio/voice")
-async def twilio_voice_post(appointmentId: Optional[str] = None, callId: Optional[str] = None):
+@app.api_route("/api/twilio/voice", methods=["GET", "POST"])
+async def twilio_voice_handler(request: Request, appointmentId: Optional[str] = None, callId: Optional[str] = None):
+    # Check query params
+    if not appointmentId:
+        appointmentId = request.query_params.get("appointmentId") or request.query_params.get("appointment_id")
+    if not callId:
+        callId = request.query_params.get("callId") or request.query_params.get("call_id")
+        
+    # Check form body if still not found
     if not appointmentId or not callId:
-        raise HTTPException(status_code=400, detail="Missing appointmentId or callId")
-    twiml = handle_twilio_voice_xml(appointmentId, callId)
-    return Response(content=twiml, media_type="text/xml")
+        try:
+            form = await request.form()
+            appointmentId = appointmentId or form.get("appointmentId") or form.get("appointment_id")
+            callId = callId or form.get("callId") or form.get("call_id")
+        except Exception:
+            pass
 
-@app.get("/api/twilio/voice")
-async def twilio_voice_get(appointmentId: str, callId: str):
+    # Fallback to latest pending appointment
+    if not appointmentId:
+        rows = await query_db("SELECT id FROM appointments WHERE status = 'pending' ORDER BY created_at DESC LIMIT 1")
+        if rows:
+            appointmentId = rows[0]["id"]
+    if not callId:
+        callId = "call_" + os.urandom(4).hex()
+
+    print(f"[Twilio Voice Route] Handled request for appointment: {appointmentId}, call: {callId}")
     twiml = handle_twilio_voice_xml(appointmentId, callId)
     return Response(content=twiml, media_type="text/xml")
 
 @app.websocket("/twilio-stream")
-async def twilio_websocket_stream(websocket: WebSocket, appointmentId: str, callId: str, sandbox: Optional[str] = "false"):
-    is_sandbox = sandbox == "true"
+async def twilio_websocket_stream(
+    websocket: WebSocket, 
+    appointmentId: Optional[str] = None, 
+    callId: Optional[str] = None, 
+    sandbox: Optional[str] = "false"
+):
+    query = dict(websocket.query_params)
+    appointmentId = appointmentId or query.get("appointmentId") or query.get("appointment_id")
+    callId = callId or query.get("callId") or query.get("call_id")
+    if not appointmentId:
+        rows = await query_db("SELECT id FROM appointments WHERE status = 'pending' ORDER BY created_at DESC LIMIT 1")
+        if rows:
+            appointmentId = rows[0]["id"]
+    if not callId:
+        callId = "call_" + os.urandom(4).hex()
+        
+    is_sandbox = sandbox == "true" or query.get("sandbox") == "true"
     await handle_pipeline_websocket(websocket, appointmentId, callId, is_sandbox)
 
 # ==========================================
@@ -527,5 +568,70 @@ async def update_settings(payload: SettingsUpdateSchema, business_id: str = Depe
         ]
     )
     return {"success": True, "message": "Agent settings updated successfully"}
+
+# --- SYSTEM TELEMETRY & CLIENT DEMO ENDPOINTS ---
+class QuickCallSchema(BaseModel):
+    customer_phone: Optional[str] = "+919028525745"
+    customer_name: Optional[str] = "Shrey Mangle"
+    service: Optional[str] = "Dental Checkup & Cleaning"
+
+@api_router.get("/system/status")
+async def get_system_status():
+    from dotenv import dotenv_values
+    latest_env = dotenv_values(env_path) if env_path.exists() else {}
+    host = latest_env.get("APP_HOST") or os.getenv("APP_HOST", "localhost:5000")
+    is_tunnel_active = not host.startswith("localhost") and not host.startswith("127.0.0.1")
+    
+    return {
+        "app_host": host,
+        "tunnel_online": is_tunnel_active,
+        "public_url": f"https://{host}" if is_tunnel_active else None,
+        "twilio_configured": bool(os.getenv("TWILIO_ACCOUNT_SID") and os.getenv("TWILIO_AUTH_TOKEN")),
+        "twilio_phone": os.getenv("TWILIO_PHONE_NUMBER", "+18575780665"),
+        "groq_active": bool(os.getenv("GROQ_API_KEY")),
+        "default_test_phone": "+91 9028525745",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+@api_router.post("/calls/quick-test")
+async def quick_test_call(payload: QuickCallSchema, business_id: str = Depends(resolve_business_id)):
+    # Look for existing pending appointment or create a quick test one
+    appt_rows = await query_db(
+        "SELECT * FROM appointments WHERE business_id = ? AND customer_phone LIKE ? ORDER BY created_at DESC LIMIT 1",
+        [business_id, f"%{payload.customer_phone[-10:]}%"]
+    )
+    
+    if appt_rows:
+        appt = appt_rows[0]
+        # Update name and status to pending
+        await query_db(
+            "UPDATE appointments SET customer_name = ?, status = 'pending' WHERE id = ?",
+            [payload.customer_name, appt["id"]]
+        )
+        appt["customer_name"] = payload.customer_name
+    else:
+        appt_id = "appt_live_" + os.urandom(3).hex()
+        tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT10:30:00Z")
+        await query_db(
+            """INSERT INTO appointments (id, business_id, customer_name, customer_phone, scheduled_at, status)
+               VALUES (?, ?, ?, ?, ?, 'pending')""",
+            [appt_id, business_id, payload.customer_name, payload.customer_phone, tomorrow]
+        )
+        appt = {
+            "id": appt_id,
+            "business_id": business_id,
+            "customer_name": payload.customer_name,
+            "customer_phone": payload.customer_phone,
+            "scheduled_at": tomorrow
+        }
+        
+    call_id = await trigger_voice_call(appt)
+    return {
+        "success": True,
+        "callId": call_id,
+        "appointmentId": appt["id"],
+        "customer_phone": payload.customer_phone,
+        "message": f"Calling {payload.customer_phone} via Twilio outbound..."
+    }
 
 app.include_router(api_router)
