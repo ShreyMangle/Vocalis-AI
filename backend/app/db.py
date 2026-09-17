@@ -48,6 +48,7 @@ async def create_tables():
             business_faqs TEXT,
             webhook_url TEXT,
             sms_enabled INTEGER DEFAULT 1,
+            supported_languages TEXT DEFAULT '["English", "Hindi"]',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
         """CREATE TABLE IF NOT EXISTS appointments (
@@ -57,6 +58,7 @@ async def create_tables():
             customer_phone TEXT NOT NULL,
             scheduled_at TEXT NOT NULL,
             status TEXT DEFAULT 'pending',
+            supported_languages TEXT DEFAULT '["English", "Hindi"]',
             original_scheduled_at TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
@@ -103,6 +105,8 @@ async def create_tables():
         "ALTER TABLE businesses ADD COLUMN sms_enabled INTEGER DEFAULT 1",
         "ALTER TABLE businesses ADD COLUMN speech_speed TEXT DEFAULT '+0%'",
         "ALTER TABLE businesses ADD COLUMN vad_sensitivity TEXT DEFAULT 'normal'",
+        "ALTER TABLE businesses ADD COLUMN supported_languages TEXT DEFAULT '[\"English\", \"Hindi\"]'",
+        "ALTER TABLE appointments ADD COLUMN supported_languages TEXT DEFAULT '[\"English\", \"Hindi\"]'",
         "ALTER TABLE calls ADD COLUMN sentiment TEXT DEFAULT 'Neutral'",
         "ALTER TABLE calls ADD COLUMN intent TEXT DEFAULT 'Confirmation'",
         "ALTER TABLE calls ADD COLUMN notes TEXT"
