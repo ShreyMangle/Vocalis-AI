@@ -11,10 +11,11 @@ import {
   Calendar, 
   ShieldCheck, 
   ArrowUpRight,
-  Sliders
+  Sliders,
+  Zap
 } from 'lucide-react';
 
-export default function Dashboard() {
+export default function Dashboard({ onQuickCall }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [customApptValue, setCustomApptValue] = useState(150);
@@ -68,6 +69,28 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* Executive Client Presentation Highlight */}
+      <div className="p-5 bg-gradient-to-r from-slate-900 via-blue-950/40 to-slate-900 border border-blue-500/30 rounded-2xl relative overflow-hidden shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 bg-blue-500/20 border border-blue-400/30 text-blue-300 text-[10px] font-extrabold uppercase rounded tracking-wider">Client Presentation Ready</span>
+            <span className="text-xs text-slate-400">PSTN Voice Stream Active</span>
+          </div>
+          <h2 className="text-xl font-extrabold text-white">Autonomous Front-Desk Voice Agent for Practice Growth</h2>
+          <p className="text-xs text-slate-300 max-w-2xl">
+            Eliminates clinic no-shows by automatically placing conversational AI confirmation calls 24 hours prior to booking. Handles real-time confirmations, calendar reschedules, and intelligent human escalations.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={onQuickCall}
+            className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-lg shadow-blue-600/30 cursor-pointer"
+          >
+            <Zap className="h-4 w-4 text-yellow-300 fill-yellow-300" /> Live Call Demo
+          </button>
+        </div>
+      </div>
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
