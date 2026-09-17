@@ -13,10 +13,12 @@ import {
   Download, 
   Send,
   RefreshCw,
-  Clock
+  Clock,
+  Zap,
+  ShieldCheck
 } from 'lucide-react';
 
-export default function Appointments() {
+export default function Appointments({ onQuickCall }) {
   const [appointments, setAppointments] = useState([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [name, setName] = useState('');
@@ -74,7 +76,17 @@ export default function Appointments() {
     e.preventDefault();
     setError('');
 
-    const scheduled_at = new Date(`${date}T${time}`).toISOString();
+    if (!name.trim() || !phone.trim() || !date || !time) {
+      setError('Please provide customer name, phone, date, and time.');
+      return;
+    }
+
+    const dt = new Date(`${date}T${time}`);
+    if (isNaN(dt.getTime())) {
+      setError('Please provide a valid date and time.');
+      return;
+    }
+    const scheduled_at = dt.toISOString();
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('http://localhost:5000/api/appointments', {
@@ -217,12 +229,18 @@ export default function Appointments() {
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
           <button
+            onClick={onQuickCall}
+            className="px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 rounded-lg text-sm text-white font-semibold transition flex items-center gap-2 shadow-lg shadow-blue-900/30 cursor-pointer"
+          >
+            <Zap className="h-4 w-4 text-yellow-300 fill-yellow-300" /> Launch Demo Call
+          </button>
+          <button
             onClick={handleDispatchCampaign}
             disabled={dispatchingCampaign}
-            className="px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 rounded-lg text-sm text-white font-semibold transition flex items-center gap-2 shadow-lg shadow-blue-900/20 cursor-pointer disabled:opacity-50"
+            className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm text-slate-200 font-semibold transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
           >
             <Send className={`h-4 w-4 ${dispatchingCampaign ? 'animate-spin' : ''}`} />
-            {dispatchingCampaign ? 'Dispatching Calls...' : 'Run 24h Reminder Batch'}
+            {dispatchingCampaign ? 'Dispatching...' : '24h Batch Run'}
           </button>
           <button
             onClick={() => {
@@ -453,49 +471,69 @@ export default function Appointments() {
           </thead>
           <tbody className="divide-y divide-slate-800/80 text-sm text-slate-300">
             {filteredAppointments.length > 0 ? (
-              filteredAppointments.map((appt) => (
-                <tr key={appt.id} className="hover:bg-slate-800/30 transition-all">
-                  <td className="px-6 py-4 font-medium text-slate-200">{appt.customer_name}</td>
-                  <td className="px-6 py-4 font-mono text-slate-400 text-xs">{appt.customer_phone}</td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2 text-slate-300">
-                      <Clock className="h-3.5 w-3.5 text-blue-400" />
-                      {new Date(appt.scheduled_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
-                        appt.status === 'confirmed'
-                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                          : appt.status === 'rescheduled'
-                          ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
-                          : appt.status === 'cancelled'
-                          ? 'bg-red-500/10 border-red-500/30 text-red-400'
-                          : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
-                      }`}
-                    >
-                      {appt.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right space-x-2">
-                    <button
-                      onClick={() => handleTriggerCall(appt)}
-                      disabled={callingId !== null}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600/10 border border-blue-500/20 hover:bg-blue-600/20 text-blue-400 rounded-lg text-xs font-semibold transition cursor-pointer"
-                    >
-                      <Phone className="h-3.5 w-3.5" />
-                      {callingId === appt.id ? 'Calling...' : 'Trigger Call'}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(appt.id)}
-                      className="p-1.5 border border-slate-700/50 hover:border-red-500/30 text-slate-500 hover:text-red-400 rounded-lg transition cursor-pointer"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))
+              filteredAppointments.map((appt) => {
+                const isPending = appt.status === 'pending';
+                return (
+                  <tr key={appt.id} className={`transition-all ${isPending ? 'bg-blue-950/20 border-l-2 border-blue-500 hover:bg-blue-950/30' : 'hover:bg-slate-800/30'}`}>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-slate-200">{appt.customer_name}</span>
+                        {isPending && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 rounded-full text-[10px] font-bold">
+                            <ShieldCheck className="h-3 w-3 text-emerald-400" /> Ready to Call
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 font-mono text-xs">
+                      <span className={isPending ? 'text-blue-300 font-bold' : 'text-slate-400'}>
+                        {appt.customer_phone}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2 text-slate-300">
+                        <Clock className="h-3.5 w-3.5 text-blue-400" />
+                        {new Date(appt.scheduled_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span
+                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+                          appt.status === 'confirmed'
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                            : appt.status === 'rescheduled'
+                            ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
+                            : appt.status === 'cancelled'
+                            ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                            : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
+                        }`}
+                      >
+                        {appt.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-right space-x-2">
+                      <button
+                        onClick={() => handleTriggerCall(appt)}
+                        disabled={callingId !== null}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          isPending
+                            ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-md shadow-blue-600/30'
+                            : 'bg-blue-600/10 border border-blue-500/20 hover:bg-blue-600/20 text-blue-400'
+                        }`}
+                      >
+                        <Phone className="h-3.5 w-3.5" />
+                        {callingId === appt.id ? 'Calling...' : 'Call Customer'}
+                      </button>
+                      <button
+                        onClick={() => handleDelete(appt.id)}
+                        className="p-1.5 border border-slate-700/50 hover:border-red-500/30 text-slate-500 hover:text-red-400 rounded-lg transition cursor-pointer"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
             ) : (
               <tr>
                 <td colSpan={5} className="text-center py-12 text-slate-500">
