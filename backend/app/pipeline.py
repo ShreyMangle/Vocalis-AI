@@ -1,4 +1,12 @@
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+env_path = Path(__file__).resolve().parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
+load_dotenv()
+
 import json
 import base64
 import asyncio
@@ -30,14 +38,33 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "")
-APP_HOST = os.getenv("APP_HOST", "localhost:5000")
 JWT_SECRET = os.getenv("JWT_SECRET", "vocalis-production-jwt-secret-key-98765")
+
+def get_app_host() -> str:
+    from dotenv import dotenv_values
+    latest_env = dotenv_values(env_path) if env_path.exists() else {}
+    return latest_env.get("APP_HOST") or os.getenv("APP_HOST", "localhost:5000")
 
 # Initialize SDK clients
 anthropic_client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 groq_client = AsyncGroq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 active_sessions = {}
+
+import re
+
+def normalize_phone_number(phone: str) -> str:
+    """Normalize any phone number format into strict E.164 without whitespace or symbols."""
+    cleaned = re.sub(r"[\s\-\(\)\.]", "", str(phone or "").strip())
+    # If standard 10-digit Indian mobile (starts with 6, 7, 8, 9)
+    if re.match(r"^[6-9]\d{9}$", cleaned):
+        return f"+91{cleaned}"
+    # If 11 digits starting with 0 followed by 10 digits
+    if re.match(r"^0[6-9]\d{9}$", cleaned):
+        return f"+91{cleaned[1:]}"
+    if not cleaned.startswith("+") and cleaned:
+        return f"+{cleaned}"
+    return cleaned
 
 # Outbound Trigger
 async def trigger_voice_call(appointment: dict) -> str:
@@ -51,35 +78,41 @@ async def trigger_voice_call(appointment: dict) -> str:
         [call_id, appointment["id"], appointment["business_id"], iso_started]
     )
 
+    dest_phone = normalize_phone_number(appointment.get("customer_phone", ""))
+    app_host = get_app_host()
+
     if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER:
         try:
-            print(f"Triggering outbound Twilio call for appointment {appointment['id']}...")
+            print(f"Triggering outbound Twilio call for appointment {appointment['id']} to {dest_phone} via https://{app_host}...")
             loop = asyncio.get_event_loop()
             client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
             call = await loop.run_in_executor(
                 None,
                 lambda: client.calls.create(
-                    url=f"https://{APP_HOST}/api/twilio/voice?appointmentId={appointment['id']}&callId={call_id}",
-                    to=appointment["customer_phone"],
+                    url=f"https://{app_host}/api/twilio/voice?appointmentId={appointment['id']}&callId={call_id}",
+                    to=dest_phone,
                     from_=TWILIO_PHONE_NUMBER
                 )
             )
-            print(f"Twilio call placed. Sid: {call.sid}")
+            print(f"Twilio call placed. Sid: {call.sid} to {dest_phone}")
         except Exception as e:
-            print(f"Error placing Twilio call: {e}")
+            print(f"Error placing Twilio call to {dest_phone}: {e}")
             await query_db("UPDATE calls SET outcome = 'no_answer' WHERE id = ?", [call_id])
     else:
-        print(f"[MOCK CALL] Phone: {appointment['customer_phone']}. Trigger Sandbox simulator on dashboard.")
+        print(f"[MOCK CALL] Phone: {dest_phone}. Trigger Sandbox simulator on dashboard.")
 
     return call_id
 
 def handle_twilio_voice_xml(appointment_id: str, call_id: str) -> str:
-    ws_url = f"wss://{APP_HOST}/twilio-stream?appointmentId={appointment_id}&callId={call_id}"
+    app_host = get_app_host()
+    ws_url = f"wss://{app_host}/twilio-stream?appointmentId={appointment_id}&amp;callId={call_id}"
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="Polly.Joanna-Neural">Connecting to scheduling assistant...</Say>
   <Connect>
-    <Stream url="{ws_url}" />
+    <Stream url="{ws_url}">
+      <Parameter name="appointmentId" value="{appointment_id}" />
+      <Parameter name="callId" value="{call_id}" />
+    </Stream>
   </Connect>
 </Response>"""
 
@@ -107,6 +140,7 @@ class CallSession:
         self.conversation_history = []
         self.current_state = "greeting" # greeting, confirming, rescheduling, completed, cancelled, escalated
         self.stream_sid = None
+        self.stream_ready = asyncio.Event()
         self.is_speaking = False
         self.audio_task = None
         
@@ -149,7 +183,16 @@ async def handle_pipeline_websocket(ws: WebSocket, appointment_id: str, call_id:
         [appointment_id]
     )
     if not appt_rows:
-        await ws.close(code=1008, reason="Appointment not found")
+        appt_rows = await query_db(
+            """SELECT a.*, b.name as business_name, b.timezone, b.agent_name, b.voice_id, 
+                      b.custom_greeting, b.business_faqs, b.webhook_url, b.sms_enabled, 
+                      b.speech_speed, b.vad_sensitivity 
+               FROM appointments a 
+               JOIN businesses b ON a.business_id = b.id 
+               ORDER BY a.created_at DESC LIMIT 1"""
+        )
+    if not appt_rows:
+        await ws.close(code=1008, reason="No appointments configured")
         return
         
     appt = appt_rows[0]
@@ -183,6 +226,8 @@ async def handle_pipeline_websocket(ws: WebSocket, appointment_id: str, call_id:
             
             if event == "start":
                 session.stream_sid = message["start"]["streamSid"]
+                session.stream_ready.set()
+                print(f"[Twilio Stream] Stream started with SID: {session.stream_sid}")
             elif event == "sandbox_text":
                 await handle_customer_utterance(ws, session, message["text"], is_sandbox)
             elif event in ["media", "sandbox_audio"]:
@@ -245,17 +290,19 @@ async def handle_pipeline_websocket(ws: WebSocket, appointment_id: str, call_id:
 
 # Run Groq Whisper STT (utterance-based)
 async def run_whisper_stt(ws: WebSocket, session: CallSession, pcm_data: bytes, is_sandbox: bool):
-    if len(pcm_data) < 16000 * 2 * 0.5: # Discard under 0.5s audio clips (noise)
+    sample_rate = 16000 if is_sandbox else 8000
+    min_bytes = int(sample_rate * 2 * 0.4) # Discard under 0.4s audio clips (noise)
+    if len(pcm_data) < min_bytes:
         return
         
     stt_start = asyncio.get_event_loop().time()
     try:
-        # Construct wav file in memory
+        # Construct wav file in memory with correct sample rate
         wav_io = io.BytesIO()
         with wave.open(wav_io, 'wb') as wav_file:
             wav_file.setnchannels(1)
             wav_file.setsampwidth(2) # 16-bit
-            wav_file.setframerate(16000)
+            wav_file.setframerate(sample_rate)
             wav_file.writeframes(pcm_data)
         wav_bytes = wav_io.getvalue()
         
@@ -268,7 +315,7 @@ async def run_whisper_stt(ws: WebSocket, session: CallSession, pcm_data: bytes, 
         
         transcript = response.text.strip()
         if transcript:
-            print(f"Groq STT [Whisper]: {transcript}")
+            print(f"Groq STT [Whisper {sample_rate}Hz]: {transcript}")
             session.stt_timers.append(int((asyncio.get_event_loop().time() - stt_start) * 1000))
             await handle_customer_utterance(ws, session, transcript, is_sandbox)
             
@@ -340,92 +387,88 @@ Always execute the corresponding tool when a final decision is reached."""
     tool_use = None
     
     try:
+        # Provider 1: Groq (Ultra-fast LLM with tool calling)
         if groq_client:
-            # Groq Llama-3.1-70b-versatile completion
-            response = await groq_client.chat.completions.create(
-                model="llama3-70b-8192",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    *[{"role": m["role"], "content": m["content"]} for m in session.conversation_history]
-                ],
-                # Map Anthropic schemas to OpenAI tools schemas
-                tools=[{
-                    "type": "function",
-                    "function": {
-                        "name": t["name"],
-                        "description": t["description"],
-                        "parameters": t["input_schema"]
-                    }
-                } for t in tools]
-            )
-            response_message = response.choices[0].message
-            response_text = response_message.content or ""
-            
-            if response_message.tool_calls:
-                tc = response_message.tool_calls[0]
-                tool_use = {
-                    "name": tc.function.name,
-                    "input": json.loads(tc.function.arguments)
-                }
+            try:
+                response = await groq_client.chat.completions.create(
+                    model="qwen/qwen3.8-27b",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        *[{"role": m["role"], "content": m["content"]} for m in session.conversation_history]
+                    ],
+                    # Map Anthropic schemas to OpenAI tools schemas
+                    tools=[{
+                        "type": "function",
+                        "function": {
+                            "name": t["name"],
+                            "description": t["description"],
+                            "parameters": t["input_schema"]
+                        }
+                    } for t in tools]
+                )
+                response_message = response.choices[0].message
+                response_text = response_message.content or ""
                 
-        elif GEMINI_API_KEY:
-            # Gemini 1.5 Flash POST completion (completely free)
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-            contents = []
-            for h in session.conversation_history:
-                contents.append({
-                    "role": "model" if h["role"] == "assistant" else "user",
-                    "parts": [{"text": h["content"]}]
-                })
-            
-            async with httpx.AsyncClient() as client:
-                res = await client.post(
-                    url,
-                    json={
-                        "contents": contents,
-                        "systemInstruction": {"parts": [{"text": system_prompt}]}
+                if response_message.tool_calls:
+                    tc = response_message.tool_calls[0]
+                    tool_use = {
+                        "name": tc.function.name,
+                        "input": json.loads(tc.function.arguments) if tc.function.arguments else {}
                     }
+            except Exception as ge:
+                print(f"[Groq LLM Warning] {ge}. Falling back to next provider...")
+
+        # Provider 2: Google Gemini (Gemini 3.6 Flash)
+        if not response_text and not tool_use and GEMINI_API_KEY:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
+                contents = []
+                for h in session.conversation_history:
+                    contents.append({
+                        "role": "model" if h["role"] == "assistant" else "user",
+                        "parts": [{"text": h["content"]}]
+                    })
+                async with httpx.AsyncClient() as client:
+                    res = await client.post(
+                        url,
+                        json={
+                            "contents": contents,
+                            "systemInstruction": {"parts": [{"text": system_prompt}]}
+                        },
+                        timeout=10.0
+                    )
+                    if res.status_code == 200:
+                        data = res.json()
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            if parts:
+                                response_text = parts[0].get("text", "")
+            except Exception as gme:
+                print(f"[Gemini LLM Warning] {gme}. Falling back to next provider...")
+
+        # Provider 3: Claude (Anthropic)
+        if not response_text and not tool_use and anthropic_client:
+            try:
+                response = await anthropic_client.messages.create(
+                    model="claude-3-5-sonnet-20240620",
+                    max_tokens=300,
+                    system=system_prompt,
+                    messages=[{"role": m["role"], "content": m["content"]} for m in session.conversation_history],
+                    tools=tools
                 )
-                if res.status_code == 200:
-                    data = res.json()
-                    response_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    
-        elif XAI_API_KEY:
-            # xAI Grok API (OpenAI-compatible)
-            async with httpx.AsyncClient() as client:
-                res = await client.post(
-                    "https://api.x.ai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {XAI_API_KEY}"},
-                    json={
-                        "model": "grok-beta",
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            *[{"role": m["role"], "content": m["content"]} for m in session.conversation_history]
-                        ]
-                    }
-                )
-                if res.status_code == 200:
-                    data = res.json()
-                    response_text = data["choices"][0]["message"]["content"]
-                    
-        elif anthropic_client:
-            # Claude 3.5 Sonnet
-            response = await anthropic_client.messages.create(
-                model="claude-3-5-sonnet-20240620",
-                max_tokens=300,
-                system=system_prompt,
-                messages=[{"role": m["role"], "content": m["content"]} for m in session.conversation_history],
-                tools=tools
-            )
-            text_blocks = [b for b in response.content if b.type == "text"]
-            if text_blocks:
-                response_text = " ".join([b.text for b in text_blocks])
-            t_calls = [b for b in response.content if b.type == "tool_use"]
-            if t_calls:
-                tool_use = {"name": t_calls[0].name, "input": t_calls[0].input}
-        else:
-            # Simulation/Mock LLM
-            await asyncio.sleep(0.3)
+                text_blocks = [b for b in response.content if b.type == "text"]
+                if text_blocks:
+                    response_text = " ".join([b.text for b in text_blocks])
+                t_calls = [b for b in response.content if b.type == "tool_use"]
+                if t_calls:
+                    tool_use = {"name": t_calls[0].name, "input": t_calls[0].input}
+            except Exception as ce:
+                print(f"[Claude LLM Warning] {ce}. Falling back to next provider...")
+
+        # Provider 4: Fallback Mock / Rule-Based Intelligence Engine
+        if not response_text and not tool_use:
+            await asyncio.sleep(0.2)
             lower = utterance.lower()
             if "yes" in lower or "confirm" in lower:
                 response_text = "Thank you! Your slot is confirmed."
@@ -489,6 +532,14 @@ Always execute the corresponding tool when a final decision is reached."""
 async def speak_sentence(ws: WebSocket, session: CallSession, text: str, is_sandbox: bool):
     session.is_speaking = True
     tts_start = asyncio.get_event_loop().time()
+
+    # For Twilio streams, ensure we wait until the 'start' event has arrived with streamSid
+    if not is_sandbox and not session.stream_sid:
+        try:
+            print(f"[TTS] Waiting for Twilio streamSid for call {session.call_id}...")
+            await asyncio.wait_for(session.stream_ready.wait(), timeout=8.0)
+        except asyncio.TimeoutError:
+            print(f"[TTS Warning] Timed out waiting for streamSid on call {session.call_id}")
 
     try:
         # Use business configured voice_id or default to Aria Neural
