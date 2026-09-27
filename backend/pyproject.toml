@@ -1,0 +1,40 @@
+[project]
+name = "voxai-backend"
+version = "0.1.0"
+description = "VoxAI - AI Voice Operations Platform Backend"
+requires-python = ">=3.12"
+
+[tool.ruff]
+# ruff is a super-fast Python linter (like spellcheck for code style)
+target-version = "py312"
+line-length = 100
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes (unused imports, undefined names)
+    "I",   # isort (import ordering)
+    "B",   # bugbear (common bug patterns)
+    "C4",  # comprehension improvements
+    "UP",  # pyupgrade (use modern Python syntax)
+]
+ignore = [
+    "B008",  # do not perform function calls in default arguments (FastAPI uses this)
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+# asyncio_mode = "auto" means every async test function runs automatically
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.mypy]
+# mypy checks that your type hints are correct
+python_version = "3.12"
+strict = false
+ignore_missing_imports = true

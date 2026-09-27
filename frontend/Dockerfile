@@ -1,20 +1,14 @@
-# Multi-stage production Dockerfile for Vite React Frontend
-FROM node:18-alpine as builder
+FROM node:20-alpine
 
 WORKDIR /app
 
+# Copy package files first (layer caching — same as backend Dockerfile)
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
+# Copy source (mounted as volume in dev, so this is mainly for production builds)
 COPY . .
-RUN npm run build
 
-# Nginx runner image
-FROM nginx:alpine
+EXPOSE 5173
 
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]

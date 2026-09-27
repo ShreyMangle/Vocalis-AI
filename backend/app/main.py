@@ -1,637 +1,329 @@
-import os
-from pathlib import Path
-from dotenv import load_dotenv
+"""
+app/main.py — FastAPI Application Entry Point
 
-env_path = Path(__file__).resolve().parent.parent / ".env"
-if env_path.exists():
-    load_dotenv(dotenv_path=env_path)
-load_dotenv()
+CONCEPT: What is main.py?
+==========================
+main.py is the heart of the backend. It:
+1. Creates the FastAPI application object.
+2. Registers all middleware (CORS, logging, etc.).
+3. Registers all API routes.
+4. Defines startup/shutdown lifecycle hooks.
+5. Registers global error handlers.
 
-import asyncio
+Think of it like the front door of a building:
+  - Visitor (HTTP request) arrives at the door.
+  - Security check (middleware).
+  - Directed to the right department (router).
+  - Department handles the request and returns a response.
+
+UVICORN runs this app. Uvicorn is the actual server process.
+Command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+         ↑ module  ↑ variable  ↑ bind to all interfaces  ↑ port
+"""
+
+import time
+import uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, APIRouter
+
+import structlog
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
-from datetime import datetime, timedelta, timezone
+from fastapi.responses import JSONResponse
 
-from app.db import init_db, query_db
-from app.auth import hash_password, verify_password, create_access_token, get_current_business_id, resolve_business_id
-from app.pipeline import trigger_voice_call, handle_twilio_voice_xml, handle_pipeline_websocket
+from app.core.config import settings
+from app.core.exceptions import VoxAIError
+from app.core.logging import setup_logging
 
-async def periodic_reminder_scheduler():
-    """Background engine that periodically monitors pending appointments and dispatches calls if enabled."""
-    while True:
-        try:
-            await asyncio.sleep(3600)  # Checks hourly
-            now = datetime.now(timezone.utc)
-            in_24h = (now + timedelta(hours=24)).isoformat()
-            now_iso = now.isoformat()
-            due_appts = await query_db(
-                "SELECT * FROM appointments WHERE status = 'pending' AND scheduled_at BETWEEN ? AND ?",
-                [now_iso, in_24h]
-            )
-            for appt in due_appts:
-                print(f"[Auto-Campaign Scheduler] Dispatching automated reminder for appt {appt['id']} ({appt['customer_name']})")
-                await trigger_voice_call(appt)
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            print(f"[Auto-Campaign Scheduler] Error: {e}")
+# Set up logging FIRST — before anything else logs anything.
+setup_logging()
+logger = structlog.get_logger(__name__)
+
+
+# =============================================================================
+# LIFESPAN: Startup & Shutdown
+# =============================================================================
+# CONCEPT: Lifespan
+# -----------------
+# Some resources need to be created when the app starts and cleaned up when it stops.
+# Examples: database connection pool, Redis connection, background workers.
+#
+# @asynccontextmanager + lifespan is the modern FastAPI way to do this.
+# Code before `yield` runs on startup. Code after `yield` runs on shutdown.
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
-    print("=" * 60)
-    print("VOCALIS AI VOICE PLATFORM STARTED")
-    print("=" * 60)
-    print("SQLite Fallback DB initialized successfully.")
-    
-    # Check loaded keys
-    groq_ok = "LOADED (Free LLM & STT)" if os.getenv("GROQ_API_KEY") else "MISSING (Using simulated mock logic)"
-    gemini_ok = "LOADED (Alternative LLM)" if os.getenv("GEMINI_API_KEY") else "MISSING"
-    grok_ok = "LOADED (Alternative LLM)" if os.getenv("XAI_API_KEY") else "MISSING"
-    anthropic_ok = "LOADED (Claude LLM)" if os.getenv("ANTHROPIC_API_KEY") else "MISSING"
-    edge_tts_ok = "ACTIVE (Free Keyless Speech)"
-    
-    print(f"Groq API Key (Llama/Whisper):  {groq_ok}")
-    print(f"Gemini API Key:               {gemini_ok}")
-    print(f"xAI Grok API Key:             {grok_ok}")
-    print(f"Anthropic API Key:            {anthropic_ok}")
-    print(f"Edge Speech TTS Engine:       {edge_tts_ok}")
-    print("=" * 60)
+    """Manage application startup and shutdown."""
+    # ── STARTUP ──────────────────────────────────────────────────────────────
+    logger.info(
+        "VoxAI starting up",
+        version=settings.APP_VERSION,
+        environment=settings.ENVIRONMENT,
+        debug=settings.DEBUG,
+    )
 
-    scheduler_task = asyncio.create_task(periodic_reminder_scheduler())
-    yield
-    scheduler_task.cancel()
+    # TODO (Week 2): Initialize database connection pool here
+    # TODO (Week 2): Initialize Redis connection here
+    # TODO (Week 8): Start background workers here
 
-app = FastAPI(title="Vocalis AI Voice Agent Platform Backend", lifespan=lifespan)
+    logger.info("VoxAI startup complete ✓")
 
-# Enable CORS for frontend local development
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], # In production, restrict this to frontend domain
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    yield  # ← Application runs here. Everything below runs on shutdown.
+
+    # ── SHUTDOWN ─────────────────────────────────────────────────────────────
+    logger.info("VoxAI shutting down...")
+    # TODO (Week 2): Close database connection pool here
+    # TODO (Week 2): Close Redis connection here
+    logger.info("VoxAI shutdown complete ✓")
+
+
+# =============================================================================
+# FASTAPI APP INSTANCE
+# =============================================================================
+app = FastAPI(
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
+    description="AI Voice Operations Platform — Powers AI receptionists for businesses.",
+    # Disable auto-generated docs in production (security best practice)
+    docs_url="/docs" if not settings.is_production else None,
+    redoc_url="/redoc" if not settings.is_production else None,
+    openapi_url="/openapi.json" if not settings.is_production else None,
+    lifespan=lifespan,
 )
 
-# Pydantic Schemas
-class RegisterSchema(BaseModel):
-    name: str
-    email: str
-    password: str
-    industry: Optional[str] = "General"
-    phone_number: Optional[str] = ""
 
-class LoginSchema(BaseModel):
-    email: str
-    password: str
+# =============================================================================
+# MIDDLEWARE
+# =============================================================================
+# CONCEPT: Middleware
+# -------------------
+# Middleware is code that runs on EVERY request, before and after route handlers.
+# Think of it as a conveyor belt — every request passes through it.
+#
+# Order matters: middleware is applied in reverse order of registration.
+# (Last registered = outermost layer = runs first on request, last on response)
 
-class AppointmentCreateSchema(BaseModel):
-    customer_name: str
-    customer_phone: str
-    scheduled_at: str
+# ── 1. CORS Middleware ───────────────────────────────────────────────────────
+# CONCEPT: CORS (Cross-Origin Resource Sharing)
+# ---------------------------------------------
+# Browsers block JavaScript from calling APIs on different domains by default.
+# This is a security feature to prevent malicious websites from making requests
+# to your API using a logged-in user's cookies.
+#
+# Our React frontend (localhost:5173) calls our API (localhost:8000).
+# These are different "origins" → browser blocks it.
+# CORS middleware tells the browser: "It's okay, this origin is trusted."
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,   # Allow cookies and auth headers
+    allow_methods=["*"],       # Allow GET, POST, PUT, PATCH, DELETE, OPTIONS
+    allow_headers=["*"],       # Allow all headers including Authorization
+)
 
-class CsvTextSchema(BaseModel):
-    csvText: str
 
-class SlotCreateSchema(BaseModel):
-    slot_time: str
+# ── 2. Request ID Middleware ─────────────────────────────────────────────────
+# CONCEPT: Request IDs
+# --------------------
+# Every HTTP request gets a unique ID (UUID). This ID is:
+# - Logged with every log entry for that request.
+# - Returned in the response header.
+#
+# Why? When you have thousands of requests per second in logs, you can filter
+# by request_id to see ALL log lines for a single request.
+# Like a tracking number for a package — you can trace its entire journey.
 
-class PlanUpgradeSchema(BaseModel):
-    plan: str
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Attach a unique request ID to every request and response."""
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
 
-class SettingsUpdateSchema(BaseModel):
-    agent_name: Optional[str] = "Sarah"
-    voice_id: Optional[str] = "en-US-AriaNeural"
-    custom_greeting: Optional[str] = ""
-    business_faqs: Optional[str] = ""
-    webhook_url: Optional[str] = ""
-    sms_enabled: Optional[int] = 1
-    speech_speed: Optional[str] = "+0%"
-    vad_sensitivity: Optional[str] = "normal"
+    # Bind the request_id to the structlog context.
+    # Any logger.info() call within this request will include request_id automatically.
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(request_id=request_id)
 
-# ==========================================
-# WEB WEBHOOK & WEBSOCKET ROUTES
-# ==========================================
+    # Process the request and measure how long it takes
+    start_time = time.perf_counter()
+    response: Response = await call_next(request)
+    duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
-from fastapi.responses import HTMLResponse, Response
-from fastapi import Request
+    # Add the request_id and timing to the response headers
+    # This lets frontend developers see these in browser DevTools → Network tab
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Response-Time"] = f"{duration_ms}ms"
 
-@app.api_route("/api/twilio/voice", methods=["GET", "POST"])
-async def twilio_voice_handler(request: Request, appointmentId: Optional[str] = None, callId: Optional[str] = None):
-    # Check query params
-    if not appointmentId:
-        appointmentId = request.query_params.get("appointmentId") or request.query_params.get("appointment_id")
-    if not callId:
-        callId = request.query_params.get("callId") or request.query_params.get("call_id")
-        
-    # Check form body if still not found
-    if not appointmentId or not callId:
-        try:
-            form = await request.form()
-            appointmentId = appointmentId or form.get("appointmentId") or form.get("appointment_id")
-            callId = callId or form.get("callId") or form.get("call_id")
-        except Exception:
-            pass
-
-    # Fallback to latest pending appointment
-    if not appointmentId:
-        rows = await query_db("SELECT id FROM appointments WHERE status = 'pending' ORDER BY created_at DESC LIMIT 1")
-        if rows:
-            appointmentId = rows[0]["id"]
-    if not callId:
-        callId = "call_" + os.urandom(4).hex()
-
-    print(f"[Twilio Voice Route] Handled request for appointment: {appointmentId}, call: {callId}")
-    twiml = handle_twilio_voice_xml(appointmentId, callId)
-    return Response(content=twiml, media_type="text/xml")
-
-@app.websocket("/twilio-stream")
-async def twilio_websocket_stream(
-    websocket: WebSocket, 
-    appointmentId: Optional[str] = None, 
-    callId: Optional[str] = None, 
-    sandbox: Optional[str] = "false"
-):
-    query = dict(websocket.query_params)
-    appointmentId = appointmentId or query.get("appointmentId") or query.get("appointment_id")
-    callId = callId or query.get("callId") or query.get("call_id")
-    if not appointmentId:
-        rows = await query_db("SELECT id FROM appointments WHERE status = 'pending' ORDER BY created_at DESC LIMIT 1")
-        if rows:
-            appointmentId = rows[0]["id"]
-    if not callId:
-        callId = "call_" + os.urandom(4).hex()
-        
-    is_sandbox = sandbox == "true" or query.get("sandbox") == "true"
-    await handle_pipeline_websocket(websocket, appointmentId, callId, is_sandbox)
-
-# ==========================================
-# REST API ROUTES
-# ==========================================
-
-api_router = APIRouter(prefix="/api")
-
-# --- AUTH ---
-@api_router.post("/auth/register")
-async def register(payload: RegisterSchema):
-    existing = await query_db("SELECT id FROM businesses WHERE email = ?", [payload.email])
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-        
-    business_id = "bus_" + os.urandom(4).hex()
-    password_hash = hash_password(payload.password)
-    
-    await query_db(
-        """INSERT INTO businesses (id, name, industry, timezone, phone_number, email, password_hash, plan)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'free')""",
-        [business_id, payload.name, payload.industry, "UTC", payload.phone_number, payload.email, password_hash]
+    logger.info(
+        "HTTP request",
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        duration_ms=duration_ms,
     )
-    
-    # Create 3 default reschedule slots for demo
-    tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
-    tomorrow_str = tomorrow.strftime("%Y-%m-%d")
-    default_slots = [
-        f"{tomorrow_str}T09:00:00Z",
-        f"{tomorrow_str}T11:00:00Z",
-        f"{tomorrow_str}T14:30:00Z"
-    ]
-    for slot in default_slots:
-        slot_id = "slot_" + os.urandom(4).hex()
-        await query_db("INSERT INTO available_slots (id, business_id, slot_time, is_booked) VALUES (?, ?, ?, 0)", [slot_id, business_id, slot])
-        
-    token = create_access_token(business_id)
-    return {"token": token, "business": {"id": business_id, "name": payload.name, "email": payload.email, "plan": "free"}}
 
-@api_router.post("/auth/login")
-async def login(payload: LoginSchema):
-    rows = await query_db("SELECT * FROM businesses WHERE email = ?", [payload.email])
-    if not rows:
-        raise HTTPException(status_code=400, detail="Invalid email or password")
-        
-    business = rows[0]
-    if not verify_password(payload.password, business["password_hash"]):
-        raise HTTPException(status_code=400, detail="Invalid email or password")
-        
-    token = create_access_token(business["id"])
-    return {
-        "token": token,
-        "business": {
-            "id": business["id"],
-            "name": business["name"],
-            "email": business["email"],
-            "plan": business["plan"],
-            "industry": business["industry"],
-            "timezone": business["timezone"],
-            "phone_number": business["phone_number"]
+    return response
+
+
+# =============================================================================
+# GLOBAL ERROR HANDLERS
+# =============================================================================
+# CONCEPT: Error Handlers
+# -----------------------
+# When an exception is raised anywhere in the application, FastAPI catches it.
+# We register handlers to convert our custom exceptions into proper JSON responses.
+#
+# Without handlers: FastAPI returns a generic 500 Internal Server Error.
+# With handlers: FastAPI returns a structured JSON with our error details.
+
+@app.exception_handler(VoxAIError)
+async def voxai_exception_handler(request: Request, exc: VoxAIError) -> JSONResponse:
+    """
+    Handle all VoxAI custom exceptions.
+    
+    Returns a consistent JSON error format:
+    {
+        "error": {
+            "code": "NOT_FOUND",
+            "message": "Tenant not found",
+            "details": {},
+            "request_id": "abc-123"
         }
     }
+    """
+    request_id = request.headers.get("X-Request-ID", "unknown")
 
-@api_router.get("/auth/me")
-async def get_me(business_id: str = Depends(get_current_business_id)):
-    rows = await query_db("SELECT id, name, industry, timezone, phone_number, email, plan, stripe_customer_id FROM businesses WHERE id = ?", [business_id])
-    if not rows:
-        raise HTTPException(status_code=404, detail="Business not found")
-    return rows[0]
-
-# --- APPOINTMENTS ---
-@api_router.get("/appointments")
-async def get_appointments(business_id: str = Depends(get_current_business_id)):
-    rows = await query_db("SELECT * FROM appointments WHERE business_id = ? ORDER BY scheduled_at ASC", [business_id])
-    return rows
-
-@api_router.post("/appointments")
-async def create_appointment(payload: AppointmentCreateSchema, business_id: str = Depends(get_current_business_id)):
-    appt_id = "appt_" + os.urandom(4).hex()
-    await query_db(
-        """INSERT INTO appointments (id, business_id, customer_name, customer_phone, scheduled_at, status)
-           VALUES (?, ?, ?, ?, ?, 'pending')""",
-        [appt_id, business_id, payload.customer_name, payload.customer_phone, payload.scheduled_at]
-    )
-    return {"id": appt_id, "customer_name": payload.customer_name, "customer_phone": payload.customer_phone, "scheduled_at": payload.scheduled_at, "status": "pending"}
-
-@api_router.post("/appointments/upload")
-async def upload_appointments(payload: CsvTextSchema, business_id: str = Depends(get_current_business_id)):
-    lines = payload.csvText.split("\n")
-    imported = []
-    
-    start_idx = 0
-    if lines and ("name" in lines[0].lower() or "phone" in lines[0].lower()):
-        start_idx = 1
-        
-    for line in lines[start_idx:]:
-        line = line.strip()
-        if not line:
-            continue
-        parts = [p.strip().replace('"', '') for p in line.split(",")]
-        if len(parts) >= 3:
-            appt_id = "appt_" + os.urandom(4).hex()
-            await query_db(
-                """INSERT INTO appointments (id, business_id, customer_name, customer_phone, scheduled_at, status)
-                   VALUES (?, ?, ?, ?, ?, 'pending')""",
-                [appt_id, business_id, parts[0], parts[1], parts[2]]
-            )
-            imported.append({"id": appt_id, "customer_name": parts[0], "customer_phone": parts[1], "scheduled_at": parts[2], "status": "pending"})
-            
-    return {"success": True, "count": len(imported), "data": imported}
-
-@api_router.delete("/appointments/{appt_id}")
-async def delete_appointment(appt_id: str, business_id: str = Depends(get_current_business_id)):
-    await query_db("DELETE FROM appointments WHERE id = ? AND business_id = ?", [appt_id, business_id])
-    return {"success": True}
-
-@api_router.post("/appointments/{appt_id}/trigger")
-async def trigger_call(appt_id: str, business_id: str = Depends(get_current_business_id)):
-    rows = await query_db("SELECT * FROM appointments WHERE id = ? AND business_id = ?", [appt_id, business_id])
-    if not rows:
-        raise HTTPException(status_code=404, detail="Appointment not found")
-    appt = rows[0]
-    call_id = await trigger_voice_call(appt)
-    return {"success": True, "callId": call_id}
-
-# --- CALENDAR INTEGRATION ---
-@api_router.get("/calendar/{business_id}/feed.ics")
-async def get_calendar_feed(business_id: str, token: Optional[str] = None):
-    # Verify business exists
-    biz_rows = await query_db("SELECT id, name FROM businesses WHERE id = ?", [business_id])
-    if not biz_rows:
-        raise HTTPException(status_code=404, detail="Business not found")
-    business = biz_rows[0]
-
-    appts = await query_db(
-        "SELECT * FROM appointments WHERE business_id = ? ORDER BY scheduled_at ASC",
-        [business_id]
+    # Log the error — but only as ERROR if it's a server fault (5xx),
+    # not for client errors like 404 or 400.
+    log_fn = logger.error if exc.status_code >= 500 else logger.warning
+    log_fn(
+        "Application error",
+        error_code=exc.code,
+        error_message=exc.message,
+        status_code=exc.status_code,
+        details=exc.details,
     )
 
-    now_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    
-    ics_lines = [
-        "BEGIN:VCALENDAR",
-        "VERSION:2.0",
-        "PRODID:-//Vocalis AI//Voice Scheduling Agent//EN",
-        f"X-WR-CALNAME:Vocalis - {business['name']}",
-        "X-WR-TIMEZONE:UTC",
-        "CALSCALE:GREGORIAN",
-        "METHOD:PUBLISH"
-    ]
-
-    for appt in appts:
-        try:
-            # Parse ISO time
-            raw_time = appt["scheduled_at"].replace("Z", "+00:00")
-            dt = datetime.fromisoformat(raw_time)
-            dt_start = dt.strftime("%Y%m%dT%H%M%SZ")
-            dt_end = (dt + timedelta(minutes=45)).strftime("%Y%m%dT%H%M%SZ")
-        except Exception:
-            continue
-
-        status_map = {
-            "confirmed": "CONFIRMED",
-            "rescheduled": "CONFIRMED",
-            "cancelled": "CANCELLED",
-            "pending": "TENTATIVE"
-        }
-        cal_status = status_map.get(appt["status"], "TENTATIVE")
-        status_label = appt["status"].upper()
-
-        ics_lines.extend([
-            "BEGIN:VEVENT",
-            f"UID:appt_{appt['id']}@vocalis.ai",
-            f"DTSTAMP:{now_stamp}",
-            f"DTSTART:{dt_start}",
-            f"DTEND:{dt_end}",
-            f"SUMMARY:{appt['customer_name']} - Appointment ({status_label})",
-            f"DESCRIPTION:Customer: {appt['customer_name']}\\nPhone: {appt['customer_phone']}\\nStatus: {appt['status']}\\nAI Managed by Vocalis",
-            f"STATUS:{cal_status}",
-            "END:VEVENT"
-        ])
-
-    ics_lines.append("END:VCALENDAR")
-    ics_content = "\r\n".join(ics_lines) + "\r\n"
-
-    return Response(
-        content=ics_content,
-        media_type="text/calendar",
-        headers={"Content-Disposition": f'attachment; filename="vocalis_{business_id}.ics"'}
-    )
-
-# --- AVAILABLE SLOTS ---
-@api_router.get("/slots")
-async def get_slots(business_id: str = Depends(get_current_business_id)):
-    rows = await query_db("SELECT * FROM available_slots WHERE business_id = ? AND is_booked = 0 ORDER BY slot_time ASC", [business_id])
-    return rows
-
-@api_router.post("/slots")
-async def create_slot(payload: SlotCreateSchema, business_id: str = Depends(get_current_business_id)):
-    slot_id = "slot_" + os.urandom(4).hex()
-    await query_db("INSERT INTO available_slots (id, business_id, slot_time, is_booked) VALUES (?, ?, ?, 0)", [slot_id, business_id, payload.slot_time])
-    return {"id": slot_id, "slot_time": payload.slot_time, "is_booked": 0}
-
-@api_router.delete("/slots/{slot_id}")
-async def delete_slot(slot_id: str, business_id: str = Depends(get_current_business_id)):
-    await query_db("DELETE FROM available_slots WHERE id = ? AND business_id = ?", [slot_id, business_id])
-    return {"success": True}
-
-# --- CALLS & HISTORY ---
-@api_router.get("/calls")
-async def get_calls(business_id: str = Depends(get_current_business_id)):
-    rows = await query_db(
-        """SELECT c.*, a.customer_name, a.customer_phone, a.scheduled_at 
-           FROM calls c
-           JOIN appointments a ON c.appointment_id = a.id
-           WHERE c.business_id = ?
-           ORDER BY c.created_at DESC""",
-        [business_id]
-    )
-    return rows
-
-@api_router.get("/stats")
-async def get_stats(business_id: str = Depends(get_current_business_id)):
-    # Counts
-    appts = await query_db("SELECT status, count(*) as count FROM appointments WHERE business_id = ? GROUP BY status", [business_id])
-    counts = {"pending": 0, "confirmed": 0, "rescheduled": 0, "cancelled": 0, "no_show": 0}
-    for row in appts:
-        counts[row["status"]] = int(row["count"])
-        
-    # Latency aggregates
-    call_stats = await query_db(
-        """SELECT 
-            AVG(stt_latency_ms) as avg_stt,
-            AVG(llm_latency_ms) as avg_llm,
-            AVG(tts_latency_ms) as avg_tts,
-            SUM(cost_cents) as total_cost,
-            AVG(duration_seconds) as avg_duration,
-            COUNT(*) as total_calls
-           FROM calls WHERE business_id = ?""",
-        [business_id]
-    )
-    stats = call_stats[0] if call_stats else {}
-    
-    # Financial metrics
-    avg_appt_value = 150
-    base_no_show_rate = 0.18
-    recovered_count = round((counts["confirmed"] + counts["rescheduled"]) * base_no_show_rate, 1)
-    recovered_rev = int(recovered_count * avg_appt_value)
-    
-    # Outcomes mapping
-    outcomes = await query_db("SELECT outcome, count(*) as count FROM calls WHERE business_id = ? GROUP BY outcome", [business_id])
-    outcome_data = [{"name": o["outcome"], "value": int(o["count"])} for o in outcomes]
-    
-    return {
-        "appointments": counts,
-        "performance": {
-            "avgStt": round(stats.get("avg_stt") or 0),
-            "avgLlm": round(stats.get("avg_llm") or 0),
-            "avgTts": round(stats.get("avg_tts") or 0),
-            "avgTotal": round((stats.get("avg_stt") or 0) + (stats.get("avg_llm") or 0) + (stats.get("avg_tts") or 0)),
-            "totalCostCents": stats.get("total_cost") or 0,
-            "avgDuration": round(stats.get("avg_duration") or 0),
-            "totalCalls": stats.get("total_calls") or 0
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+                "details": exc.details,
+                "request_id": request_id,
+            }
         },
-        "roi": {
-            "preventedNoShows": recovered_count,
-            "recoveredRevenue": recovered_rev,
-            "avgAppointmentValue": avg_appt_value
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Catch-all for any unhandled exception.
+    
+    In production, never expose the raw exception message — it might contain
+    internal implementation details that attackers could exploit.
+    """
+    request_id = request.headers.get("X-Request-ID", "unknown")
+
+    logger.error(
+        "Unhandled exception",
+        exc_info=exc,
+        path=request.url.path,
+        method=request.method,
+    )
+
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "INTERNAL_ERROR",
+                "message": "An unexpected error occurred. Please try again.",
+                "request_id": request_id,
+            }
         },
-        "outcomes": outcome_data
-    }
-
-# --- BILLING ---
-@api_router.get("/billing/status")
-async def billing_status(business_id: str = Depends(get_current_business_id)):
-    rows = await query_db("SELECT plan, stripe_customer_id FROM businesses WHERE id = ?", [business_id])
-    if not rows:
-        raise HTTPException(status_code=404, detail="Business not found")
-    return rows[0]
-
-@api_router.post("/billing/checkout")
-async def billing_checkout(payload: PlanUpgradeSchema, business_id: str = Depends(get_current_business_id)):
-    stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
-    is_mock = not stripe_key
-    checkout_url = f"/billing/success?plan={payload.plan}" if is_mock else "https://checkout.stripe.com/pay/mock"
-    return {"url": checkout_url, "isMock": is_mock}
-
-@api_router.post("/billing/success-callback")
-async def billing_success(payload: PlanUpgradeSchema, business_id: str = Depends(get_current_business_id)):
-    await query_db("UPDATE businesses SET plan = ? WHERE id = ?", [payload.plan, business_id])
-    return {"success": True, "plan": payload.plan}
-
-# --- CAMPAIGNS & REMINDERS BATCH ---
-@api_router.post("/campaigns/dispatch-reminders")
-async def dispatch_reminders_campaign(business_id: str = Depends(get_current_business_id)):
-    # Find all pending appointments for this business
-    appts = await query_db(
-        "SELECT * FROM appointments WHERE business_id = ? AND status = 'pending' ORDER BY scheduled_at ASC",
-        [business_id]
     )
+
+
+# =============================================================================
+# HEALTH ENDPOINTS
+# =============================================================================
+# CONCEPT: Health Checks
+# ----------------------
+# Production systems need health check endpoints so:
+# - Docker knows whether the container is alive (liveness probe).
+# - Load balancers know whether to send traffic here (readiness probe).
+# - Monitoring systems know the app is up.
+#
+# /health  → "Is the app process alive?" (always returns 200 if app is running)
+# /ready   → "Is the app ready to serve traffic?" (checks DB, Redis, etc.)
+#
+# Docker Compose healthcheck: GET /health → if 200, container is healthy.
+
+@app.get("/health", tags=["System"])
+async def health_check():
+    """
+    Liveness probe — confirms the application process is running.
     
-    if not appts:
-        return {"success": True, "count": 0, "message": "No pending appointments to call", "calls": []}
-        
-    dispatched = []
-    for appt in appts:
-        call_id = await trigger_voice_call(appt)
-        dispatched.append({
-            "appointment_id": appt["id"],
-            "customer_name": appt["customer_name"],
-            "customer_phone": appt["customer_phone"],
-            "call_id": call_id
-        })
-        
+    Returns 200 immediately. Does NOT check database or external services.
+    Used by: Docker, AWS ECS, load balancers.
+    """
     return {
-        "success": True,
-        "count": len(dispatched),
-        "message": f"Successfully triggered {len(dispatched)} outbound reminder call(s)",
-        "calls": dispatched
+        "status": "ok",
+        "app": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "environment": settings.ENVIRONMENT,
     }
 
-# --- CALLS & HISTORY ---
-@api_router.get("/calls/export.csv")
-async def export_calls_csv(business_id: str = Depends(resolve_business_id)):
-    rows = await query_db(
-        """SELECT c.id, c.started_at, c.outcome, c.sentiment, c.intent, c.duration_seconds, 
-                  c.stt_latency_ms, c.llm_latency_ms, c.tts_latency_ms, c.cost_cents,
-                  a.customer_name, a.customer_phone, a.scheduled_at
-           FROM calls c
-           JOIN appointments a ON c.appointment_id = a.id
-           WHERE c.business_id = ?
-           ORDER BY c.created_at DESC""",
-        [business_id]
-    )
+
+@app.get("/ready", tags=["System"])
+async def readiness_check():
+    """
+    Readiness probe — confirms the app can serve traffic.
     
-    headers = [
-        "Call ID", "Customer Name", "Phone", "Scheduled Time", "Outcome", 
-        "Sentiment", "Intent", "Duration (s)", "STT (ms)", "LLM (ms)", "TTS (ms)", "Cost (cents)", "Timestamp"
-    ]
-    csv_rows = [",".join(headers)]
+    Checks all critical dependencies:
+    - Database connection
+    - Redis connection
     
-    for r in rows:
-        csv_rows.append(",".join([
-            f'"{r.get("id", "")}"',
-            f'"{r.get("customer_name", "")}"',
-            f'"{r.get("customer_phone", "")}"',
-            f'"{r.get("scheduled_at", "")}"',
-            f'"{r.get("outcome", "")}"',
-            f'"{r.get("sentiment", "Neutral")}"',
-            f'"{r.get("intent", "General")}"',
-            str(r.get("duration_seconds", 0)),
-            str(r.get("stt_latency_ms", 0)),
-            str(r.get("llm_latency_ms", 0)),
-            str(r.get("tts_latency_ms", 0)),
-            str(r.get("cost_cents", 0)),
-            f'"{r.get("started_at", "")}"'
-        ]))
-        
-    csv_body = "\r\n".join(csv_rows)
-    return Response(
-        content=csv_body,
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="vocalis_call_history_{business_id}.csv"'}
-    )
-
-# --- SETTINGS ---
-@api_router.get("/settings")
-async def get_settings(business_id: str = Depends(get_current_business_id)):
-    rows = await query_db(
-        "SELECT agent_name, voice_id, custom_greeting, business_faqs, webhook_url, sms_enabled, speech_speed, vad_sensitivity FROM businesses WHERE id = ?",
-        [business_id]
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail="Business settings not found")
-    return rows[0]
-
-@api_router.put("/settings")
-async def update_settings(payload: SettingsUpdateSchema, business_id: str = Depends(get_current_business_id)):
-    await query_db(
-        """UPDATE businesses SET
-            agent_name = ?,
-            voice_id = ?,
-            custom_greeting = ?,
-            business_faqs = ?,
-            webhook_url = ?,
-            sms_enabled = ?,
-            speech_speed = ?,
-            vad_sensitivity = ?
-           WHERE id = ?""",
-        [
-            payload.agent_name or "Sarah",
-            payload.voice_id or "en-US-AriaNeural",
-            payload.custom_greeting or "",
-            payload.business_faqs or "",
-            payload.webhook_url or "",
-            1 if payload.sms_enabled else 0,
-            payload.speech_speed or "+0%",
-            payload.vad_sensitivity or "normal",
-            business_id
-        ]
-    )
-    return {"success": True, "message": "Agent settings updated successfully"}
-
-# --- SYSTEM TELEMETRY & CLIENT DEMO ENDPOINTS ---
-class QuickCallSchema(BaseModel):
-    customer_phone: Optional[str] = "+919028525745"
-    customer_name: Optional[str] = "Shrey Mangle"
-    service: Optional[str] = "Dental Checkup & Cleaning"
-
-@api_router.get("/system/status")
-async def get_system_status():
-    from dotenv import dotenv_values
-    latest_env = dotenv_values(env_path) if env_path.exists() else {}
-    host = latest_env.get("APP_HOST") or os.getenv("APP_HOST", "localhost:5000")
-    is_tunnel_active = not host.startswith("localhost") and not host.startswith("127.0.0.1")
-    
-    return {
-        "app_host": host,
-        "tunnel_online": is_tunnel_active,
-        "public_url": f"https://{host}" if is_tunnel_active else None,
-        "twilio_configured": bool(os.getenv("TWILIO_ACCOUNT_SID") and os.getenv("TWILIO_AUTH_TOKEN")),
-        "twilio_phone": os.getenv("TWILIO_PHONE_NUMBER", "+18575780665"),
-        "groq_active": bool(os.getenv("GROQ_API_KEY")),
-        "default_test_phone": "+91 9028525745",
-        "timestamp": datetime.now(timezone.utc).isoformat()
+    Returns 200 if ready, 503 if not ready.
+    Used by: load balancers to decide whether to route traffic here.
+    """
+    checks = {
+        "database": "unchecked",
+        "redis": "unchecked",
     }
+    all_ok = True
 
-@api_router.post("/calls/quick-test")
-async def quick_test_call(payload: QuickCallSchema, business_id: str = Depends(resolve_business_id)):
-    # Look for existing pending appointment or create a quick test one
-    appt_rows = await query_db(
-        "SELECT * FROM appointments WHERE business_id = ? AND customer_phone LIKE ? ORDER BY created_at DESC LIMIT 1",
-        [business_id, f"%{payload.customer_phone[-10:]}%"]
+    # TODO (Week 2): Replace with real DB ping
+    # try:
+    #     await db.execute(text("SELECT 1"))
+    #     checks["database"] = "ok"
+    # except Exception:
+    #     checks["database"] = "error"
+    #     all_ok = False
+    checks["database"] = "ok (not yet connected)"
+
+    # TODO (Week 2): Replace with real Redis ping
+    # try:
+    #     await redis_client.ping()
+    #     checks["redis"] = "ok"
+    # except Exception:
+    #     checks["redis"] = "error"
+    #     all_ok = False
+    checks["redis"] = "ok (not yet connected)"
+
+    status_code = 200 if all_ok else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "ready" if all_ok else "not_ready",
+            "checks": checks,
+        },
     )
-    
-    if appt_rows:
-        appt = appt_rows[0]
-        # Update name and status to pending
-        await query_db(
-            "UPDATE appointments SET customer_name = ?, status = 'pending' WHERE id = ?",
-            [payload.customer_name, appt["id"]]
-        )
-        appt["customer_name"] = payload.customer_name
-    else:
-        appt_id = "appt_live_" + os.urandom(3).hex()
-        tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT10:30:00Z")
-        await query_db(
-            """INSERT INTO appointments (id, business_id, customer_name, customer_phone, scheduled_at, status)
-               VALUES (?, ?, ?, ?, ?, 'pending')""",
-            [appt_id, business_id, payload.customer_name, payload.customer_phone, tomorrow]
-        )
-        appt = {
-            "id": appt_id,
-            "business_id": business_id,
-            "customer_name": payload.customer_name,
-            "customer_phone": payload.customer_phone,
-            "scheduled_at": tomorrow
-        }
-        
-    call_id = await trigger_voice_call(appt)
-    return {
-        "success": True,
-        "callId": call_id,
-        "appointmentId": appt["id"],
-        "customer_phone": payload.customer_phone,
-        "message": f"Calling {payload.customer_phone} via Twilio outbound..."
-    }
 
-app.include_router(api_router)
+
+# =============================================================================
+# API ROUTERS (added incrementally each week)
+# =============================================================================
+# TODO (Week 2): from app.api.v1 import auth; app.include_router(auth.router, prefix="/api/v1")
+# TODO (Week 3): from app.api.v1 import business; app.include_router(business.router, ...)
+# ... and so on

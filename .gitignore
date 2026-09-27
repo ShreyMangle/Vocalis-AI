@@ -1,48 +1,65 @@
-# Environment variables and secrets (CRITICAL)
-.env
-.env.local
-.env.*.local
+# =============================================================================
+# VoxAI — .gitignore
+# =============================================================================
 
-# Python backend files
+# ─── Environment / Secrets ────────────────────────────────────────────────────
+# NEVER commit these — they contain API keys and passwords
+.env
+.env.*
+!.env.example       # .env.example IS committed (it has no real secrets)
+*.pem
+*.key
+
+# ─── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
-*$py.class
+*.so
 .venv/
 venv/
-ENV/
 env/
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Local database storage
-backend/data/
-*.sqlite
-*.db
-
-# Node.js / React frontend files
-node_modules/
+.Python
+build/
 dist/
-dist-ssr/
-*.local
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-.eslintcache
+*.egg-info/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
 
-# OS/System files
+# ─── Node / Frontend ──────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# ─── Docker ───────────────────────────────────────────────────────────────────
+# Don't ignore docker-compose.yml — it's needed
+# But ignore override files with secrets
+docker-compose.override.yml
+docker-compose.prod.yml     # production config with real secrets
+
+# ─── IDE / Editor ─────────────────────────────────────────────────────────────
+.vscode/settings.json       # Keep .vscode/extensions.json (useful to share)
+.idea/
+*.swp
+*.swo
 .DS_Store
 Thumbs.db
 
-# IDE configurations
-.vscode/
-.idea/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.swp
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
 
-# Local project documentation
-PRODUCT_SPEC.md
+# ─── Uploads / Generated ──────────────────────────────────────────────────────
+uploads/
+media/
+*.mp3
+*.wav
+*.webm
+
+# ─── Alembic ──────────────────────────────────────────────────────────────────
+# Keep alembic/ folder but ignore generated __pycache__
+backend/alembic/__pycache__/

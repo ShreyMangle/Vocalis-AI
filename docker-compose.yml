@@ -1,28 +1,91 @@
-version: '3.8'
+# =============================================================================
+# VoxAI — Docker Compose (Local Development)
+# =============================================================================
+#
+# CONCEPT: Docker Compose
+# ------------------------
+# Docker Compose lets you define and run multiple containers with ONE command.
+# Think of it as a "recipe" for your entire local development environment.
+#
+# Services defined here:
+#   postgres  → The database (PostgreSQL 16)
+#   redis     → The cache / session store (Redis 7)
+#   backend   → Our FastAPI app
+#   frontend  → Our React + Vite app (Nginx in prod, dev server for dev)
+#
+# USAGE:
+#   Start everything:        docker-compose up
+#   Start in background:     docker-compose up -d
+#   View logs:               docker-compose logs -f backend
+#   Stop everything:         docker-compose down
+#   Stop + delete volumes:   docker-compose down -v  (WARNING: deletes DB data)
+#   Rebuild after code change: docker-compose up --build
+#
+# NETWORKS:
+#   All services are on the same "voxai_network".
+#   Services talk to each other by their service name (not localhost).
+#   e.g., from backend container: connect to postgres at host "postgres:5432"
 
 services:
+
+  # ===========================================================================
+  # POSTGRES — Our primary database
+  # ===========================================================================
   postgres:
-    image: postgres:15-alpine
-    container_name: vocalis_postgres
-    restart: always
+    image: pgvector/pgvector:pg16
+    # WHY pgvector image instead of plain postgres:16?
+    # pgvector is a PostgreSQL extension we need for storing AI embeddings.
+    # This image = PostgreSQL 16 + pgvector pre-installed.
+    container_name: voxai_postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: vocalis
-      POSTGRES_PASSWORD: vocalis_secure_password_123
-      POSTGRES_DB: vocalis_db
+      POSTGRES_USER: voxai
+      POSTGRES_PASSWORD: voxai_dev_password
+      POSTGRES_DB: voxai_db
+      # This script runs when the container first starts (creates pgvector extension)
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
     ports:
       - "5432:5432"
+      # HOST:CONTAINER — expose port 5432 on your laptop so you can connect
+      # with DB tools like TablePlus, DBeaver, pgAdmin.
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Named volume = data persists even when container stops.
+      # postgres_data is defined at the bottom of this file.
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
+      # This SQL file runs automatically on first start.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vocalis -d vocalis_db"]
+      # Docker checks this command every 5 seconds.
+      # If it fails 5 times in a row, Docker marks container as "unhealthy".
+      # backend depends_on postgres with condition: service_healthy →
+      # backend won't start until postgres is healthy.
+      test: ["CMD-SHELL", "pg_isready -U voxai -d voxai_db"]
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    networks:
+      - voxai_network
 
+  # ===========================================================================
+  # REDIS — Cache, session store, message broker
+  # ===========================================================================
   redis:
     image: redis:7-alpine
-    container_name: vocalis_redis
-    restart: always
+    # "alpine" = minimal Linux image (3MB instead of 100MB). Faster to download.
+    container_name: voxai_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+    # Explanation of redis-server flags:
+    # --maxmemory 256mb         → Never use more than 256MB RAM
+    # --maxmemory-policy allkeys-lru → When full, evict least recently used keys
+    # --appendonly yes          → Enable persistence (survives restart)
+    # --appendfsync everysec    → Sync to disk every second (safe + fast balance)
     ports:
       - "6379:6379"
     volumes:
@@ -32,44 +95,100 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 5s
+    networks:
+      - voxai_network
 
+  # ===========================================================================
+  # BACKEND — FastAPI application
+  # ===========================================================================
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: vocalis_backend
-    restart: always
+      # Build the image from backend/Dockerfile
+    container_name: voxai_backend
+    restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "8000:8000"
     environment:
-      - PORT=5000
-      - DATABASE_URL=postgresql://vocalis:vocalis_secure_password_123@postgres:5432/vocalis_db
-      - REDIS_URL=redis://redis:6379/0
-      - JWT_SECRET=vocalis-production-jwt-secret-key-98765
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - XAI_API_KEY=${XAI_API_KEY:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
-      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
-      - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER:-}
+      # Override settings for Docker environment
+      # Services talk to each other by service name, not localhost
+      DATABASE_URL: postgresql+asyncpg://voxai:voxai_dev_password@postgres:5432/voxai_db
+      #                                                             ↑ service name, not localhost
+      REDIS_URL: redis://redis:6379/0
+      #                   ↑ service name, not localhost
+      ENVIRONMENT: development
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+      # IMPORTANT: Change this in production. Use docker-compose.prod.yml override.
+      JWT_SECRET: voxai-docker-dev-secret-change-in-production-min32chars
+      # Pass through API keys from your host machine's environment
+      # If you have GROQ_API_KEY set in your shell, it passes through here.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      CARTESIA_API_KEY: ${CARTESIA_API_KEY:-}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
+      VOBIZ_API_KEY: ${VOBIZ_API_KEY:-}
     depends_on:
       postgres:
-        condition: service_healthy
+        condition: service_healthy  # Wait until postgres is healthy before starting
       redis:
-        condition: service_healthy
+        condition: service_healthy  # Wait until redis is healthy before starting
+    volumes:
+      # DEVELOPMENT TRICK: Mount your local code into the container.
+      # Changes you make to backend/ files are immediately visible in the container.
+      # Combined with --reload in uvicorn, the server restarts on code changes.
+      - ./backend:/app
+      # But don't mount .env — use environment: block above instead.
+    # Override CMD from Dockerfile for development (adds --reload for hot-reload)
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - voxai_network
 
+  # ===========================================================================
+  # FRONTEND — React + Vite (dev server)
+  # ===========================================================================
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: vocalis_frontend
-    restart: always
+    container_name: voxai_frontend
+    restart: unless-stopped
     ports:
-      - "80:80"
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      # Mount code but NOT node_modules (the container has its own node_modules)
+      # /app/node_modules is an "anonymous volume" that shadows the host's node_modules
+    command: npm run dev -- --host 0.0.0.0 --port 5173
     depends_on:
       - backend
+    networks:
+      - voxai_network
 
+# =============================================================================
+# NAMED VOLUMES
+# =============================================================================
+# Named volumes persist data even when containers are removed.
+# Unlike bind mounts (./path:/container/path), named volumes are managed by Docker.
 volumes:
   postgres_data:
+    driver: local
   redis_data:
+    driver: local
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+# Custom network so services can talk to each other by name.
+networks:
+  voxai_network:
+    driver: bridge

@@ -1,8 +1,12 @@
-# Vocalis AI Voice Agent FastAPI Application Package
-from pathlib import Path
-from dotenv import load_dotenv
+"""
+VoxAI Backend Package
 
-env_path = Path(__file__).resolve().parent.parent / ".env"
-if env_path.exists():
-    load_dotenv(dotenv_path=env_path)
-load_dotenv()
+This __init__.py marks the `app` directory as a Python package.
+Without it, Python wouldn't know that this folder contains importable modules.
+
+Think of it like a "table of contents" marker for the folder.
+"""
+
+__version__ = "0.1.0"
+__title__ = "VoxAI Backend"
+__description__ = "AI Voice Operations Platform — Backend API"
