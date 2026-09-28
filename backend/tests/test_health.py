@@ -19,16 +19,9 @@ TestClient from FastAPI/Starlette:
 """
 
 import pytest
-from fastapi.testclient import TestClient
-
-from app.main import app
-
-# TestClient wraps our FastAPI app. It simulates real HTTP requests.
-# "with" statement ensures the app's lifespan (startup/shutdown) runs.
-client = TestClient(app)
 
 
-def test_health_returns_200():
+def test_health_returns_200(client):
     """
     GIVEN: The application is running
     WHEN:  GET /health is called
@@ -38,7 +31,7 @@ def test_health_returns_200():
     assert response.status_code == 200
 
 
-def test_health_returns_ok_status():
+def test_health_returns_ok_status(client):
     """
     GIVEN: The application is running
     WHEN:  GET /health is called
@@ -53,17 +46,7 @@ def test_health_returns_ok_status():
     assert "environment" in data
 
 
-def test_readiness_returns_200():
-    """
-    GIVEN: The application is running (Day 1: DB not yet connected)
-    WHEN:  GET /ready is called
-    THEN:  Response should be 200 (placeholder checks pass)
-    """
-    response = client.get("/ready")
-    assert response.status_code == 200
-
-
-def test_readiness_has_checks():
+def test_readiness_has_checks(client):
     """
     GIVEN: The application is running
     WHEN:  GET /ready is called
@@ -78,7 +61,7 @@ def test_readiness_has_checks():
     assert "redis" in data["checks"]
 
 
-def test_request_id_header_is_set():
+def test_request_id_header_is_set(client):
     """
     GIVEN: The application is running
     WHEN:  Any request is made
@@ -89,7 +72,7 @@ def test_request_id_header_is_set():
     assert "x-request-id" in response.headers
 
 
-def test_request_id_echoed_from_client():
+def test_request_id_echoed_from_client(client):
     """
     GIVEN: Client sends a custom X-Request-ID
     WHEN:  GET /health is called with that header
@@ -100,7 +83,7 @@ def test_request_id_echoed_from_client():
     assert response.headers["x-request-id"] == my_request_id
 
 
-def test_unknown_route_returns_404():
+def test_unknown_route_returns_404(client):
     """
     GIVEN: The application is running
     WHEN:  A non-existent route is accessed
@@ -110,7 +93,7 @@ def test_unknown_route_returns_404():
     assert response.status_code == 404
 
 
-def test_cors_headers_present():
+def test_cors_headers_present(client):
     """
     GIVEN: A request with an Origin header (simulating a browser request)
     WHEN:  GET /health is called

@@ -33,6 +33,8 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.exceptions import VoxAIError
 from app.core.logging import setup_logging
+from app.db.base import engine
+from app.db.redis import redis_client
 
 # Set up logging FIRST — before anything else logs anything.
 setup_logging()
@@ -61,18 +63,41 @@ async def lifespan(app: FastAPI):
         debug=settings.DEBUG,
     )
 
-    # TODO (Week 2): Initialize database connection pool here
-    # TODO (Week 2): Initialize Redis connection here
-    # TODO (Week 8): Start background workers here
+    # ── Initialize Redis ──────────────────────────────────────────────────
+    # We attempt Redis init but don't crash if it fails in development.
+    # In production the /ready probe will catch this and stop traffic routing.
+    try:
+        await redis_client.initialize()
+        logger.info("Redis connected ✓")
+    except Exception as e:
+        logger.warning("Redis unavailable on startup", error=str(e))
 
+    # ── Verify DB connectivity ────────────────────────────────────────────
+    # We don't create tables here — that's Alembic's job.
+    # We just verify the connection works.
+    try:
+        from sqlalchemy import text
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        logger.info("Database connected ✓")
+    except Exception as e:
+        logger.warning("Database unavailable on startup", error=str(e))
+
+    # TODO (Week 8): Start background workers here
     logger.info("VoxAI startup complete ✓")
 
     yield  # ← Application runs here. Everything below runs on shutdown.
 
     # ── SHUTDOWN ─────────────────────────────────────────────────────────────
     logger.info("VoxAI shutting down...")
-    # TODO (Week 2): Close database connection pool here
-    # TODO (Week 2): Close Redis connection here
+
+    # Close Redis connection pool — releases all Redis connections
+    await redis_client.close()
+
+    # Dispose the SQLAlchemy engine — closes all DB connections in the pool
+    # Without this, connections leak and the DB server eventually runs out
+    await engine.dispose()
+
     logger.info("VoxAI shutdown complete ✓")
 
 
@@ -279,37 +304,42 @@ async def health_check():
 async def readiness_check():
     """
     Readiness probe — confirms the app can serve traffic.
-    
+
     Checks all critical dependencies:
-    - Database connection
-    - Redis connection
-    
-    Returns 200 if ready, 503 if not ready.
-    Used by: load balancers to decide whether to route traffic here.
+    - Database: runs SELECT 1 to verify connection is alive
+    - Redis: sends PING command to verify connection is alive
+
+    Returns 200 if all checks pass, 503 if any check fails.
+    Load balancers call this before routing traffic to a new container.
     """
-    checks = {
-        "database": "unchecked",
-        "redis": "unchecked",
-    }
+    from sqlalchemy import text
+
+    checks: dict[str, str] = {}
     all_ok = True
 
-    # TODO (Week 2): Replace with real DB ping
-    # try:
-    #     await db.execute(text("SELECT 1"))
-    #     checks["database"] = "ok"
-    # except Exception:
-    #     checks["database"] = "error"
-    #     all_ok = False
-    checks["database"] = "ok (not yet connected)"
+    # ── Database check ────────────────────────────────────────────────────
+    # We run a trivial query "SELECT 1" — if it returns 1, the DB is alive.
+    # This catches: DB server down, wrong credentials, network issues.
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {type(e).__name__}"
+        all_ok = False
+        logger.error("Readiness: database check failed", error=str(e))
 
-    # TODO (Week 2): Replace with real Redis ping
-    # try:
-    #     await redis_client.ping()
-    #     checks["redis"] = "ok"
-    # except Exception:
-    #     checks["redis"] = "error"
-    #     all_ok = False
-    checks["redis"] = "ok (not yet connected)"
+    # ── Redis check ───────────────────────────────────────────────────────
+    # PING → PONG means Redis is alive and accepting commands.
+    try:
+        is_alive = await redis_client.ping()
+        checks["redis"] = "ok" if is_alive else "error: no response"
+        if not is_alive:
+            all_ok = False
+    except Exception as e:
+        checks["redis"] = f"error: {type(e).__name__}"
+        all_ok = False
+        logger.error("Readiness: redis check failed", error=str(e))
 
     status_code = 200 if all_ok else 503
     return JSONResponse(

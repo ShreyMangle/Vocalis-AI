@@ -9,7 +9,7 @@ pydantic-settings==2.6.1  # Config management — reads from .env files
 # =============================================================================
 # Database
 # =============================================================================
-sqlalchemy==2.0.36        # ORM — lets us write Python instead of raw SQL
+sqlalchemy[asyncio]==2.0.36 # ORM — lets us write Python instead of raw SQL; [asyncio] adds greenlet for async support
 asyncpg==0.30.0           # Async PostgreSQL driver — connects Python to Postgres
 alembic==1.14.0           # DB migrations — manages schema changes safely
 pgvector==0.3.6           # pgvector Python client — for vector/embedding search
