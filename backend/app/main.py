@@ -30,6 +30,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.router import api_router
 from app.core.config import settings
 from app.core.exceptions import VoxAIError
 from app.core.logging import setup_logging
@@ -352,8 +353,15 @@ async def readiness_check():
 
 
 # =============================================================================
-# API ROUTERS (added incrementally each week)
+# API ROUTERS
 # =============================================================================
-# TODO (Week 2): from app.api.v1 import auth; app.include_router(auth.router, prefix="/api/v1")
-# TODO (Week 3): from app.api.v1 import business; app.include_router(business.router, ...)
-# ... and so on
+# All API routes are registered via the api_router defined in app/api/router.py.
+# Adding a new feature = add its router there, not here.
+
+app.include_router(api_router)
+# Routes now available:
+#   POST /api/v1/auth/register
+#   POST /api/v1/auth/login
+#   POST /api/v1/auth/refresh
+#   POST /api/v1/auth/logout
+#   GET  /api/v1/auth/me

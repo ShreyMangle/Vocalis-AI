@@ -24,6 +24,7 @@ arq==0.26.1               # Async Redis Queue — background job processor
 # Security & Auth
 # =============================================================================
 passlib[bcrypt]==1.7.4    # Password hashing — bcrypt is the gold standard
+bcrypt==4.0.1             # MUST pin 4.0.1 — passlib[bcrypt] breaks with bcrypt 4.1+
 python-jose[cryptography]==3.3.0  # JWT tokens — for authentication
 python-multipart==0.0.20  # Multipart form parsing — for file uploads
 
