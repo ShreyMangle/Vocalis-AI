@@ -25,7 +25,7 @@ Adding a new feature:
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, tenants
+from app.api.v1 import auth, business, tenants
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -35,9 +35,8 @@ api_router.include_router(auth.router)
 # Tenant & team management routes: /api/v1/tenants/current, /api/v1/tenants/current/members, etc.
 api_router.include_router(tenants.router)
 
-# Future routers (uncomment as we build them):
-# from app.api.v1 import business
-# api_router.include_router(business.router)   # Week 3
+# Business profile & operating hours: /api/v1/business, /api/v1/business/working-hours
+api_router.include_router(business.router)
 
 # from app.api.v1 import agents
 # api_router.include_router(agents.router)     # Week 4

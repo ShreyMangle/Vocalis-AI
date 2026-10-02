@@ -5,6 +5,7 @@ fastapi==0.115.5          # Web framework — builds our HTTP API
 uvicorn[standard]==0.32.1 # ASGI server — runs FastAPI (like Apache for Python)
 pydantic==2.10.3          # Data validation — ensures API inputs are correct
 pydantic-settings==2.6.1  # Config management — reads from .env files
+tzdata>=2024.1            # IANA timezone database — required for zoneinfo on Windows
 
 # =============================================================================
 # Database

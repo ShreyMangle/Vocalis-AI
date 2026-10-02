@@ -41,6 +41,14 @@ from app.schemas.auth import (
     TokenPair,
     UserResponse,
 )
+from app.schemas.business import (
+    BusinessCreateRequest,
+    BusinessResponse,
+    BusinessUpdateRequest,
+    WorkingHoursItem,
+    WorkingHoursResponse,
+    WorkingHoursUpdateBatchRequest,
+)
 from app.schemas.tenant import (
     AddMemberRequest,
     TenantDetailResponse,
@@ -67,4 +75,11 @@ __all__ = [
     "TenantMemberResponse",
     "AddMemberRequest",
     "UpdateMemberRoleRequest",
+    # Business & Working Hours
+    "BusinessCreateRequest",
+    "BusinessUpdateRequest",
+    "BusinessResponse",
+    "WorkingHoursItem",
+    "WorkingHoursUpdateBatchRequest",
+    "WorkingHoursResponse",
 ]
