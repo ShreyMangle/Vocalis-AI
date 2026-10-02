@@ -27,5 +27,44 @@ PYDANTIC VALIDATION:
       password: str = Field(min_length=8)  ← enforces minimum length
   
   Pydantic raises a 422 Unprocessable Entity if validation fails.
-  This happens BEFORE your route handler runs.
 """
+
+from app.schemas.auth import (
+    LoginRequest,
+    LoginResponse,
+    MeResponse,
+    RefreshRequest,
+    RefreshResponse,
+    RegisterRequest,
+    RegisterResponse,
+    TenantResponse,
+    TokenPair,
+    UserResponse,
+)
+from app.schemas.tenant import (
+    AddMemberRequest,
+    TenantDetailResponse,
+    TenantMemberResponse,
+    TenantUpdateRequest,
+    UpdateMemberRoleRequest,
+)
+
+__all__ = [
+    # Auth
+    "RegisterRequest",
+    "RegisterResponse",
+    "LoginRequest",
+    "LoginResponse",
+    "RefreshRequest",
+    "RefreshResponse",
+    "TokenPair",
+    "UserResponse",
+    "TenantResponse",
+    "MeResponse",
+    # Tenant & Members
+    "TenantDetailResponse",
+    "TenantUpdateRequest",
+    "TenantMemberResponse",
+    "AddMemberRequest",
+    "UpdateMemberRoleRequest",
+]

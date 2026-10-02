@@ -25,12 +25,15 @@ Adding a new feature:
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth
+from app.api.v1 import auth, tenants
 
 api_router = APIRouter(prefix="/api/v1")
 
 # Auth routes: /api/v1/auth/register, /api/v1/auth/login, etc.
 api_router.include_router(auth.router)
+
+# Tenant & team management routes: /api/v1/tenants/current, /api/v1/tenants/current/members, etc.
+api_router.include_router(tenants.router)
 
 # Future routers (uncomment as we build them):
 # from app.api.v1 import business
