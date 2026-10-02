@@ -15,6 +15,9 @@ from app.models.tenant import Tenant
 from app.models.tenant_user import TenantUser, UserRole
 from app.models.user import User
 
+# Week 3 — Business Profile & Working Hours
+from app.models.business import Business, DayOfWeek, WorkingHours
+
 __all__ = [
     "Base",
     "TimestampMixin",
@@ -24,4 +27,8 @@ __all__ = [
     "User",
     "TenantUser",
     "UserRole",
+    # Week 3
+    "Business",
+    "DayOfWeek",
+    "WorkingHours",
 ]

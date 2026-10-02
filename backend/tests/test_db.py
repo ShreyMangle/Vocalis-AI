@@ -179,6 +179,30 @@ class TestModelBase:
         mapped_type = Base.type_annotation_map[uuid_module.UUID]
         assert isinstance(mapped_type, UUID)
 
+    def test_business_model_columns(self):
+        """GIVEN: Business model. THEN: Has expected columns and table name."""
+        from app.models.business import Business
+        cols = {c.name for c in Business.__table__.columns}
+        expected = {
+            "id", "tenant_id", "name", "description", "industry",
+            "timezone", "phone_number", "email", "website", "address",
+            "created_at", "updated_at", "is_deleted", "deleted_at",
+        }
+        assert expected.issubset(cols)
+        assert Business.__tablename__ == "businesses"
+
+    def test_working_hours_model_columns(self):
+        """GIVEN: WorkingHours model. THEN: Has expected columns and table name."""
+        from app.models.business import WorkingHours
+        cols = {c.name for c in WorkingHours.__table__.columns}
+        expected = {
+            "id", "tenant_id", "business_id", "day_of_week",
+            "open_time", "close_time", "is_closed",
+            "created_at", "updated_at",
+        }
+        assert expected.issubset(cols)
+        assert WorkingHours.__tablename__ == "working_hours"
+
 
 # =============================================================================
 # Tests: Redis Client
