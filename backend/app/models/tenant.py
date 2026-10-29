@@ -100,5 +100,11 @@ class Tenant(Base, TimestampMixin, SoftDeleteMixin):
         cascade="all, delete-orphan",
     )
 
+    agent_config: Mapped["AgentConfig | None"] = relationship(  # noqa: F821
+        back_populates="tenant",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
     def __repr__(self) -> str:
         return f"<Tenant id={self.id} slug={self.slug} plan={self.plan}>"

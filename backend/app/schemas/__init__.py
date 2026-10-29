@@ -41,6 +41,21 @@ from app.schemas.auth import (
     TokenPair,
     UserResponse,
 )
+from app.schemas.agent import (
+    AgentConfigCreateRequest,
+    AgentConfigResponse,
+    AgentConfigUpdateRequest,
+    PromptPreviewResponse,
+    VoiceCatalogItem,
+)
+from app.schemas.appointment import (
+    AppointmentCreateRequest,
+    AppointmentListResponse,
+    AppointmentResponse,
+    AppointmentUpdateRequest,
+    AvailableSlotItem,
+    AvailableSlotsResponse,
+)
 from app.schemas.business import (
     BusinessCreateRequest,
     BusinessResponse,
@@ -48,6 +63,22 @@ from app.schemas.business import (
     WorkingHoursItem,
     WorkingHoursResponse,
     WorkingHoursUpdateBatchRequest,
+)
+from app.schemas.call import (
+    CallListResponse,
+    CallResponse,
+    CallStatsResponse,
+)
+from app.schemas.service import (
+    ServiceCreateRequest,
+    ServiceListResponse,
+    ServiceResponse,
+    ServiceUpdateRequest,
+)
+from app.schemas.telephony import (
+    OutboundCallRequest,
+    OutboundCallResponse,
+    TelephonyStatusResponse,
 )
 from app.schemas.tenant import (
     AddMemberRequest,
@@ -82,4 +113,30 @@ __all__ = [
     "WorkingHoursItem",
     "WorkingHoursUpdateBatchRequest",
     "WorkingHoursResponse",
+    # Services
+    "ServiceCreateRequest",
+    "ServiceUpdateRequest",
+    "ServiceResponse",
+    "ServiceListResponse",
+    # Agent
+    "AgentConfigCreateRequest",
+    "AgentConfigUpdateRequest",
+    "AgentConfigResponse",
+    "PromptPreviewResponse",
+    "VoiceCatalogItem",
+    # Appointments
+    "AppointmentCreateRequest",
+    "AppointmentUpdateRequest",
+    "AppointmentResponse",
+    "AppointmentListResponse",
+    "AvailableSlotItem",
+    "AvailableSlotsResponse",
+    # Calls & Analytics
+    "CallResponse",
+    "CallListResponse",
+    "CallStatsResponse",
+    # Telephony
+    "OutboundCallRequest",
+    "OutboundCallResponse",
+    "TelephonyStatusResponse",
 ]

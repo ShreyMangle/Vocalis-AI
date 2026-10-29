@@ -24,6 +24,9 @@ For Day 2, we keep it simple. As we add more services (Week 2+),
 we'll add more fixtures here.
 """
 
+import os
+os.environ.setdefault("DISABLE_SQLALCHEMY_CEXT", "1")
+
 import pytest
 from fastapi.testclient import TestClient
 

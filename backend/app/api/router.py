@@ -25,7 +25,16 @@ Adding a new feature:
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, business, tenants
+from app.api.v1 import (
+    agents,
+    appointments,
+    auth,
+    business,
+    calls,
+    services,
+    telephony,
+    tenants,
+)
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -38,8 +47,20 @@ api_router.include_router(tenants.router)
 # Business profile & operating hours: /api/v1/business, /api/v1/business/working-hours
 api_router.include_router(business.router)
 
-# from app.api.v1 import agents
-# api_router.include_router(agents.router)     # Week 4
+# Business services catalog: /api/v1/business/services
+api_router.include_router(services.router)
+
+# Voice agent configuration: /api/v1/agents
+api_router.include_router(agents.router)
+
+# Appointments & scheduling: /api/v1/appointments
+api_router.include_router(appointments.router)
+
+# Call telemetry & analytics: /api/v1/calls
+api_router.include_router(calls.router)
+
+# Telephony webhooks & outbound dispatch: /api/v1/telephony
+api_router.include_router(telephony.router)
 
 # from app.api.v1 import knowledge
 # api_router.include_router(knowledge.router)  # Week 5

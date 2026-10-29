@@ -126,6 +126,19 @@ class Business(Base, TimestampMixin, SoftDeleteMixin):
         order_by="WorkingHours.day_of_week",
     )
 
+    services: Mapped[list["Service"]] = relationship(  # noqa: F821
+        "Service",
+        back_populates="business",
+        cascade="all, delete-orphan",
+        order_by="Service.name",
+    )
+
+    agent_config: Mapped["AgentConfig | None"] = relationship(  # noqa: F821
+        "AgentConfig",
+        back_populates="business",
+        uselist=False,
+    )
+
     def __repr__(self) -> str:
         return f"<Business id={self.id} name={self.name} tenant_id={self.tenant_id}>"
 

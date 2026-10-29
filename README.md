@@ -113,16 +113,16 @@ VoxAI/
 
 | Week | Focus | Status |
 |---|---|---|
-| **Week 1** | Architecture + Docker + Health endpoints | ✅ Day 1 complete |
-| **Week 2** | Multi-tenancy + Authentication (JWT, RBAC) | 🔜 |
-| **Week 3** | Business onboarding (profile, hours, services) | 🔜 |
-| **Week 4** | Agent configuration + LLM provider abstraction | 🔜 |
-| **Week 5** | RAG knowledge base (upload → embed → search) | 🔜 |
+| **Week 1** | Architecture + Docker + Health endpoints | ✅ Complete (8 tests) |
+| **Week 2** | Multi-tenancy + Authentication (JWT, RBAC) | ✅ Complete (57 tests) |
+| **Week 3** | Business onboarding (profile, hours, services) | ✅ Complete (92 tests) |
+| **Week 4** | Agent configuration + LLM provider abstraction | ✅ Complete (105 tests) |
+| **Week 5** | RAG knowledge base (upload → embed → search) | 🔜 In Progress |
 | **Week 6** | AI Orchestrator + Tool calling | 🔜 |
-| **Week 7** | Appointment system (slots, booking, conflicts) | 🔜 |
-| **Week 8** | Voice pipeline (STT → LLM → TTS via WebSocket) | 🔜 |
-| **Week 9** | Telephony integration (VoBiz/Twilio) | 🔜 |
-| **Week 10** | Cost tracking + Analytics | 🔜 |
+| **Week 7** | Appointment system (slots, booking, conflicts, iCal) | ✅ Complete (113 tests) |
+| **Week 8** | Voice pipeline (audio G.711 mulaw, VAD, barge-in) | ✅ Core engines complete (117 tests) |
+| **Week 9** | Telephony integration (Twilio/VoBiz TwiML, dispatch) | ✅ Complete (122 tests) |
+| **Week 10** | Cost tracking + Analytics + CSV export | ✅ Complete (128 tests) |
 | **Week 11** | Frontend dashboard (full SaaS UI) | 🔜 |
 | **Week 12** | Testing + Security + AWS deployment | 🔜 |
 

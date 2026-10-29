@@ -17,6 +17,16 @@ from app.models.user import User
 
 # Week 3 — Business Profile & Working Hours
 from app.models.business import Business, DayOfWeek, WorkingHours
+from app.models.service import Service
+
+# Week 4 — Voice Agent Configuration
+from app.models.agent import AgentConfig
+
+# Week 7 — Appointments & Scheduling
+from app.models.appointment import Appointment, AppointmentStatus
+
+# Week 10 — Call Analytics & Telemetry
+from app.models.call import Call, CallDirection, CallSentiment, CallStatus
 
 __all__ = [
     "Base",
@@ -31,4 +41,15 @@ __all__ = [
     "Business",
     "DayOfWeek",
     "WorkingHours",
+    "Service",
+    # Week 4
+    "AgentConfig",
+    # Week 7
+    "Appointment",
+    "AppointmentStatus",
+    # Week 10
+    "Call",
+    "CallDirection",
+    "CallStatus",
+    "CallSentiment",
 ]
