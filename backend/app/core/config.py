@@ -141,16 +141,20 @@ class Settings(BaseSettings):
     DEFAULT_TTS_PROVIDER: str = "edge"   # edge-tts is free, for development
 
     # =========================================================================
-    # TELEPHONY
+    # TELEPHONY (VoBiz primary for India, Twilio global fallback)
     # =========================================================================
+    DEFAULT_TELEPHONY_PROVIDER: str = "vobiz"
+
+    # VoBiz (TRAI-compliant India Telephony)
+    VOBIZ_API_KEY: str | None = None
+    VOBIZ_ACCOUNT_ID: str | None = None
+    VOBIZ_PHONE_NUMBER: str | None = None
+    VOBIZ_BASE_URL: str = "https://api.vobiz.ai/v1"
+
+    # Twilio (Global Telephony fallback)
     TWILIO_ACCOUNT_SID: str | None = None
     TWILIO_AUTH_TOKEN: str | None = None
     TWILIO_PHONE_NUMBER: str | None = None
-
-    VOBIZ_API_KEY: str | None = None
-    VOBIZ_ACCOUNT_ID: str | None = None
-
-    DEFAULT_TELEPHONY_PROVIDER: str = "twilio"
 
     # =========================================================================
     # AWS / STORAGE

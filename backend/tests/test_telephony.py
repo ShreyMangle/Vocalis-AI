@@ -45,7 +45,7 @@ def test_get_telephony_status_authorized(client, tokens):
     )
     assert response.status_code == 200
     data = response.json()
-    assert "provider" in data
+    assert data["provider"] == "vobiz"
     assert "is_configured" in data
 
 
