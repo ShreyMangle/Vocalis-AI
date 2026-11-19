@@ -7,12 +7,24 @@ Routes:
   GET      /api/v1/telephony/status        → Check telephony carrier readiness
 """
 
+import base64
+import json
 import uuid
 from typing import Any
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.dependencies import (
@@ -20,12 +32,18 @@ from app.core.dependencies import (
     require_authenticated,
     require_role,
 )
+from app.db.base import SessionFactory
+from app.models.agent import AgentConfig
+from app.models.appointment import Appointment
+from app.models.business import Business
 from app.models.tenant_user import UserRole
 from app.schemas.telephony import (
     OutboundCallRequest,
     OutboundCallResponse,
     TelephonyStatusResponse,
 )
+from app.voice.pipeline import VoicePipeline
+from app.voice.session import CallSession
 
 logger = structlog.get_logger(__name__)
 
@@ -264,4 +282,217 @@ async def trigger_outbound_call(
             from_phone=from_phone,
             message=f"Network exception: {str(e)}",
         )
+
+
+# =============================================================================
+# REAL-TIME VOICE PIPELINE WEBSOCKETS
+# =============================================================================
+
+@router.websocket("/stream")
+async def carrier_voice_stream(
+    websocket: WebSocket,
+    appointmentId: str | None = Query(default=None),
+    callId: str | None = Query(default=None),
+) -> None:
+    """
+    Bidirectional media stream WebSocket handler for VoBiz & Twilio telephony carriers.
+    Streams 8kHz G.711 mu-law audio frames and handles real-time barge-in and tool calling.
+    """
+    await websocket.accept()
+    logger.info("Carrier WebSocket media stream connected", appointment_id=appointmentId, call_id=callId)
+
+    call_uuid = uuid.UUID(callId) if callId else uuid.uuid4()
+    tenant_id = uuid.uuid4()
+    business_id = uuid.uuid4()
+    business_name = "Clinic Reception"
+    customer_name = "Valued Customer"
+    customer_phone = "+919876543210"
+    appt_uuid = None
+    greeting_override = None
+
+    # Load operational entities from database (gracefully fallback if DB offline)
+    try:
+        async with SessionFactory() as db:
+            if appointmentId:
+                try:
+                    appt_uuid = uuid.UUID(appointmentId)
+                    res = await db.execute(
+                        select(Appointment).where(Appointment.id == appt_uuid)
+                    )
+                    appt = res.scalar_one_or_none()
+                    if appt:
+                        tenant_id = appt.tenant_id
+                        business_id = appt.business_id
+                        customer_name = appt.customer_name
+                        customer_phone = appt.customer_phone
+                except Exception as e:
+                    logger.warning("Could not parse appointmentId", error=str(e))
+
+            # Query Business profile
+            b_res = await db.execute(
+                select(Business).where(Business.id == business_id)
+            )
+            business = b_res.scalar_one_or_none()
+            if not business:
+                b_first = await db.execute(select(Business).limit(1))
+                business = b_first.scalar_one_or_none()
+                if business:
+                    business_id = business.id
+                    tenant_id = business.tenant_id
+
+            if business:
+                business_name = business.name
+
+            # Query Agent configuration
+            a_res = await db.execute(
+                select(AgentConfig).where(AgentConfig.tenant_id == tenant_id)
+            )
+            agent_config = a_res.scalar_one_or_none()
+            if agent_config and agent_config.greeting_message:
+                greeting_override = agent_config.greeting_message
+    except Exception as dbe:
+        logger.warning("Could not connect to database on stream startup, using in-memory defaults", error=str(dbe))
+
+    call_session = CallSession(
+        call_id=call_uuid,
+        tenant_id=tenant_id,
+        business_id=business_id,
+        customer_phone=customer_phone,
+        customer_name=customer_name,
+        business_name=business_name,
+        appointment_id=appt_uuid,
+        is_sandbox=False,
+    )
+
+    pipeline = VoicePipeline(
+        websocket=websocket,
+        session=call_session,
+        session_factory=SessionFactory,
+    )
+
+    # Deliver opening greeting
+    await pipeline.send_greeting(greeting_override)
+
+    try:
+        while True:
+            raw_text = await websocket.receive_text()
+            data = json.loads(raw_text)
+            event = data.get("event")
+
+            if event == "start":
+                call_session.stream_sid = data.get("start", {}).get("streamSid")
+                call_session.stream_ready_event.set()
+                logger.info("Carrier stream started", stream_sid=call_session.stream_sid)
+
+            elif event == "media":
+                payload = data.get("media", {}).get("payload")
+                if payload:
+                    chunk = base64.b64decode(payload)
+                    await pipeline.handle_audio_chunk(chunk)
+
+            elif event == "stop":
+                logger.info("Carrier stream stop signal received")
+                break
+
+    except WebSocketDisconnect:
+        logger.info("Carrier WebSocket disconnected", call_id=str(call_uuid))
+    except Exception as e:
+        logger.error("Carrier WebSocket stream exception", error=str(e))
+    finally:
+        await pipeline.finalize_call()
+
+
+@router.websocket("/sandbox")
+async def browser_sandbox_stream(
+    websocket: WebSocket,
+    businessId: str | None = Query(default=None),
+) -> None:
+    """
+    Browser-based Sandbox Voice Simulator WebSocket.
+    Allows real-time testing of text dialog, microphone streaming, and tool execution.
+    """
+    await websocket.accept()
+    logger.info("Browser Sandbox WebSocket connected")
+
+    call_uuid = uuid.uuid4()
+    tenant_id = uuid.uuid4()
+    business_id = uuid.uuid4()
+    business_name = "Sandbox Medical Clinic"
+    greeting_override = None
+
+    try:
+        async with SessionFactory() as db:
+            if businessId:
+                try:
+                    b_uuid = uuid.UUID(businessId)
+                    b_res = await db.execute(select(Business).where(Business.id == b_uuid))
+                    b = b_res.scalar_one_or_none()
+                    if b:
+                        business_id = b.id
+                        tenant_id = b.tenant_id
+                        business_name = b.name
+                except Exception:
+                    pass
+            else:
+                b_first = await db.execute(select(Business).limit(1))
+                b = b_first.scalar_one_or_none()
+                if b:
+                    business_id = b.id
+                    tenant_id = b.tenant_id
+                    business_name = b.name
+
+            a_res = await db.execute(
+                select(AgentConfig).where(AgentConfig.tenant_id == tenant_id)
+            )
+            agent_config = a_res.scalar_one_or_none()
+            if agent_config and agent_config.greeting_message:
+                greeting_override = agent_config.greeting_message
+    except Exception as dbe:
+        logger.warning("Could not connect to database on sandbox startup, using defaults", error=str(dbe))
+
+    call_session = CallSession(
+        call_id=call_uuid,
+        tenant_id=tenant_id,
+        business_id=business_id,
+        customer_phone="+919876543210",
+        customer_name="Simulator Test Caller",
+        business_name=business_name,
+        is_sandbox=True,
+    )
+
+    pipeline = VoicePipeline(
+        websocket=websocket,
+        session=call_session,
+        session_factory=SessionFactory,
+    )
+
+    await pipeline.send_greeting(greeting_override)
+
+    try:
+        while True:
+            raw_text = await websocket.receive_text()
+            data = json.loads(raw_text)
+            event = data.get("event")
+
+            if event == "sandbox_text":
+                text = data.get("text", "").strip()
+                if text:
+                    await pipeline.process_utterance(text)
+
+            elif event == "sandbox_audio":
+                payload = data.get("payload")
+                if payload:
+                    chunk = base64.b64decode(payload)
+                    await pipeline.handle_audio_chunk(chunk)
+
+            elif event == "stop":
+                break
+
+    except WebSocketDisconnect:
+        logger.info("Sandbox WebSocket disconnected", call_id=str(call_uuid))
+    except Exception as e:
+        logger.error("Sandbox WebSocket exception", error=str(e))
+    finally:
+        await pipeline.finalize_call()
+
 
