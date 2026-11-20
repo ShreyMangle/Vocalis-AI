@@ -51,7 +51,17 @@ class ApiClient {
       let errorMessage = `HTTP error ${res.status}`;
       try {
         const errorJson = await res.json();
-        errorMessage = errorJson.detail || errorJson.message || errorMessage;
+        if (errorJson.error?.message) {
+          errorMessage = errorJson.error.message;
+        } else if (typeof errorJson.detail === 'string') {
+          errorMessage = errorJson.detail;
+        } else if (Array.isArray(errorJson.detail)) {
+          errorMessage = errorJson.detail
+            .map((d: any) => (d.msg ? `${d.loc ? d.loc.slice(1).join('.') + ': ' : ''}${d.msg}` : JSON.stringify(d)))
+            .join('; ');
+        } else if (errorJson.message) {
+          errorMessage = errorJson.message;
+        }
       } catch {
         // use fallback
       }
@@ -66,10 +76,22 @@ class ApiClient {
   }
 
   // ── Auth ──────────────────────────────────────────────────────────────────
-  async register(data: { email: string; password: string; full_name: string; tenant_name: string; phone_number?: string }) {
+  async register(data: {
+    email: string;
+    password: string;
+    full_name: string;
+    tenant_name?: string;
+    business_name?: string;
+    phone_number?: string;
+  }) {
+    const payload = {
+      ...data,
+      business_name: data.business_name || data.tenant_name,
+      tenant_name: data.tenant_name || data.business_name,
+    };
     return this.request<{ user: User; tenant: Tenant; tokens: { access_token: string; refresh_token: string } }>(
       '/api/v1/auth/register',
-      { method: 'POST', body: JSON.stringify(data) }
+      { method: 'POST', body: JSON.stringify(payload) }
     );
   }
 

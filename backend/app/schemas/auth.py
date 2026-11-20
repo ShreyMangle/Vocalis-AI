@@ -28,8 +28,9 @@ Example:
 import re
 import uuid
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
 # =============================================================================
@@ -64,11 +65,29 @@ class RegisterRequest(BaseModel):
         examples=["Dr. Anita Sharma"],
     )
     business_name: str = Field(
+        default="",
         min_length=2,
         max_length=255,
         description="Your business/clinic/hotel name",
         examples=["Sunrise Clinic"],
     )
+    tenant_name: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=255,
+        description="Alias for business_name",
+        examples=["Sunrise Clinic"],
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_names(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            b_name = data.get("business_name") or data.get("tenant_name")
+            if b_name:
+                data["business_name"] = b_name
+                data["tenant_name"] = b_name
+        return data
 
     @field_validator("password")
     @classmethod

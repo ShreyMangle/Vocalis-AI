@@ -308,6 +308,18 @@ class TestRegisterSchema:
                 business_name="Test Co",
             )
 
+    def test_tenant_name_alias_supported(self):
+        """GIVEN tenant_name instead of business_name WHEN parsed THEN both populated."""
+        from app.schemas.auth import RegisterRequest
+        req = RegisterRequest(
+            email="owner@sunrise.com",
+            password="MyStr0ngPass1",
+            full_name="Dr. Anita",
+            tenant_name="Sunrise Clinic",
+        )
+        assert req.business_name == "Sunrise Clinic"
+        assert req.tenant_name == "Sunrise Clinic"
+
 
 # =============================================================================
 # Tests: Slugify Helper
@@ -434,3 +446,69 @@ class TestCurrentUserDependency:
         """Login route exists and requires a body."""
         response = client.post("/api/v1/auth/login", json={})
         assert response.status_code == 422  # Pydantic validation, not 404
+
+    def test_register_creates_tenant_user_business_and_agent(self, client):
+        """
+        GIVEN: Registration payload with tenant_name
+        WHEN:  POST /api/v1/auth/register is called
+        THEN:  Creates Tenant, User, TenantUser, Business, AgentConfig and returns 201 Created
+        """
+        from app.main import app
+        from app.db.session import get_session
+        from app.models.tenant import Tenant
+        from app.models.user import User
+        from app.models.tenant_user import TenantUser
+        from app.models.business import Business
+        from app.models.agent import AgentConfig
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = mock_result
+
+        added_objects = []
+        def capture_add(obj):
+            if not getattr(obj, "id", None):
+                obj.id = uuid.uuid4()
+            if not getattr(obj, "created_at", None):
+                from datetime import timezone
+                obj.created_at = datetime.now(timezone.utc)
+            added_objects.append(obj)
+        mock_session.add = capture_add
+
+        async def mock_flush():
+            for obj in added_objects:
+                if not getattr(obj, "id", None):
+                    obj.id = uuid.uuid4()
+                if not getattr(obj, "created_at", None):
+                    from datetime import timezone
+                    obj.created_at = datetime.now(timezone.utc)
+        mock_session.flush = mock_flush
+
+        async def override_get_session():
+            yield mock_session
+
+        app.dependency_overrides[get_session] = override_get_session
+        try:
+            payload = {
+                "tenant_name": "Sunrise Wellness Center",
+                "full_name": "Dr. Anita Sharma",
+                "email": "anita.unique@sunrisewellness.in",
+                "password": "Password123",
+            }
+            response = client.post("/api/v1/auth/register", json=payload)
+            assert response.status_code == 201
+            data = response.json()
+            assert data["user"]["email"] == "anita.unique@sunrisewellness.in"
+            assert data["tenant"]["name"] == "Sunrise Wellness Center"
+            assert "access_token" in data["tokens"]
+
+            # Verify Tenant, User, TenantUser, Business, and AgentConfig were all added
+            types_added = [type(obj) for obj in added_objects]
+            assert Tenant in types_added
+            assert User in types_added
+            assert TenantUser in types_added
+            assert Business in types_added
+            assert AgentConfig in types_added
+        finally:
+            app.dependency_overrides.pop(get_session, None)

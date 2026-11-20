@@ -23,6 +23,7 @@ export const Register: React.FC = () => {
     try {
       await register({
         tenant_name: tenantName,
+        business_name: tenantName,
         full_name: fullName,
         email,
         password,
@@ -114,10 +115,13 @@ export const Register: React.FC = () => {
                   minLength={8}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Minimum 8 characters"
+                  placeholder="Min 8 chars (e.g. Pass1234)"
                   className="w-full pl-10 pr-4 py-2.5 bg-slate-900 border border-slate-700/80 rounded-xl text-sm text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 transition"
                 />
               </div>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Must be at least 8 chars with 1 uppercase, 1 lowercase, and 1 digit.
+              </p>
             </div>
 
             <button

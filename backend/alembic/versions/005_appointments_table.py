@@ -23,9 +23,13 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     # ── appointmentstatus enum ──────────────────────────────────────────────
     op.execute(
+        "DO $$ BEGIN "
+        "IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'appointmentstatus') THEN "
         "CREATE TYPE appointmentstatus AS ENUM ("
         "'PENDING', 'CONFIRMED', 'CANCELLED', 'RESCHEDULED', 'COMPLETED', 'NO_SHOW'"
-        ")"
+        "); "
+        "END IF; "
+        "END $$;"
     )
 
     # ── appointments table ──────────────────────────────────────────────────
@@ -68,6 +72,7 @@ def upgrade() -> None:
                 "COMPLETED",
                 "NO_SHOW",
                 name="appointmentstatus",
+                create_type=False,
             ),
             nullable=False,
             server_default="CONFIRMED",

@@ -14,7 +14,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (data: { email: string; password: string; full_name: string; tenant_name: string; phone_number?: string }) => Promise<void>;
+  register: (data: { email: string; password: string; full_name: string; tenant_name?: string; business_name?: string; phone_number?: string }) => Promise<void>;
   logout: () => void;
   refreshProfile: () => Promise<void>;
 }
@@ -74,7 +74,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     email: string;
     password: string;
     full_name: string;
-    tenant_name: string;
+    tenant_name?: string;
+    business_name?: string;
     phone_number?: string;
   }) => {
     setIsLoading(true);

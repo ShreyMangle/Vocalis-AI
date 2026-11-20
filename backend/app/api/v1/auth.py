@@ -66,6 +66,8 @@ from app.core.security import (
     verify_password,
 )
 from app.db.session import get_session
+from app.models.agent import AgentConfig
+from app.models.business import Business
 from app.models.tenant import Tenant
 from app.models.tenant_user import TenantUser, UserRole
 from app.models.user import User
@@ -220,15 +222,33 @@ async def register(
         is_active=True,
     )
     session.add(membership)
-    # The session.commit() in get_session() will commit all three inserts atomically
 
-    # ── Step 5: Generate tokens ────────────────────────────────────────────────
+    # ── Step 5: Automatically create Business profile and AgentConfig ─────────
+    business = Business(
+        tenant_id=tenant.id,
+        name=body.business_name,
+        industry="healthcare",
+        timezone="Asia/Kolkata",
+    )
+    session.add(business)
+    await session.flush()
+
+    agent = AgentConfig(
+        tenant_id=tenant.id,
+        business_id=business.id,
+        name=f"{body.business_name} Assistant",
+        greeting_message=f"Hello! Thank you for calling {body.business_name}. How can I assist you today?",
+    )
+    session.add(agent)
+
+    # ── Step 6: Generate tokens ────────────────────────────────────────────────
     tokens = _build_token_pair(user.id, tenant.id, UserRole.OWNER.value)
 
     logger.info(
         "Registration complete",
         user_id=str(user.id),
         tenant_id=str(tenant.id),
+        business_id=str(business.id),
     )
 
     return RegisterResponse(
