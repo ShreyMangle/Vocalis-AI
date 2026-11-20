@@ -57,6 +57,7 @@ from app.core.exceptions import (
     ConflictError,
     NotFoundError,
 )
+from app.core.rate_limit import rate_limit
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -144,6 +145,7 @@ def _build_token_pair(user_id: uuid.UUID, tenant_id: uuid.UUID, role: str) -> To
     "/register",
     response_model=RegisterResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, key_prefix="rl_reg"))],
     summary="Register a new business",
     description="""
     Creates a new **Tenant** (business organization) and **User** (owner) in one step.
@@ -244,6 +246,7 @@ async def register(
     "/login",
     response_model=LoginResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(rate_limit(max_requests=20, window_seconds=60, key_prefix="rl_login"))],
     summary="Login with email and password",
 )
 async def login(

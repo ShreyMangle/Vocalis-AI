@@ -62,6 +62,7 @@ class RedisClient:
         # This is the "lazy initialization" pattern.
         self._pool: aioredis.ConnectionPool | None = None
         self._client: aioredis.Redis | None = None
+        self.is_connected: bool = False
 
     async def initialize(self) -> None:
         """
@@ -73,20 +74,24 @@ class RedisClient:
             max_connections=20,      # Max simultaneous Redis connections
             decode_responses=True,   # Return strings instead of bytes
             # e.g., GET "key" returns "value" not b"value"
-            socket_timeout=5.0,      # Timeout for individual Redis commands (seconds)
-            socket_connect_timeout=5.0,  # Timeout for establishing connection
+            socket_timeout=0.5,      # Fast timeout for Redis commands (0.5s)
+            socket_connect_timeout=0.5,  # Fast timeout for establishing connection
         )
         self._client = aioredis.Redis(connection_pool=self._pool)
 
         # Test the connection immediately
-        await self.ping()
-        logger.info("Redis client initialized", url=str(settings.REDIS_URL))
+        self.is_connected = await self.ping()
+        if self.is_connected:
+            logger.info("Redis client initialized", url=str(settings.REDIS_URL))
+        else:
+            logger.warning("Redis server unreachable on startup", url=str(settings.REDIS_URL))
 
     async def close(self) -> None:
         """
         Close all Redis connections.
         Called on application shutdown — ensures no connections leak.
         """
+        self.is_connected = False
         if self._pool:
             await self._pool.aclose()
             logger.info("Redis connection pool closed")
@@ -98,11 +103,14 @@ class RedisClient:
         Used by /ready endpoint and startup check.
         """
         if not self._client:
+            self.is_connected = False
             return False
         try:
             result = await self._client.ping()
-            return result is True
+            self.is_connected = result is True
+            return self.is_connected
         except Exception as e:
+            self.is_connected = False
             logger.warning("Redis ping failed", error=str(e))
             return False
 

@@ -1,0 +1,115 @@
+# =============================================================================
+# VoxAI — Docker Compose (Production Environment)
+# =============================================================================
+# Usage:
+#   docker-compose -f docker-compose.prod.yml up -d --build
+
+services:
+  # ── PostgreSQL Database with pgvector ─────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: voxai_postgres_prod
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-voxai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-voxai_db}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voxai -d voxai_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - voxai_internal
+
+  # ── Redis In-Memory Cache ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: voxai_redis_prod
+    restart: always
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+    volumes:
+      - redis_prod_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - voxai_internal
+
+  # ── FastAPI Backend (Production Multi-worker) ─────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: voxai_backend_prod
+    restart: always
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-voxai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-voxai_db}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: production
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGINS: '["https://${APP_DOMAIN:-voxai.yourdomain.com}"]'
+      DEFAULT_TELEPHONY_PROVIDER: vobiz
+      VOBIZ_API_KEY: ${VOBIZ_API_KEY}
+      VOBIZ_ACCOUNT_ID: ${VOBIZ_ACCOUNT_ID}
+      VOBIZ_PHONE_NUMBER: ${VOBIZ_PHONE_NUMBER}
+      VOBIZ_BASE_URL: ${VOBIZ_BASE_URL:-https://api.vobiz.ai/v1}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      CARTESIA_API_KEY: ${CARTESIA_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - voxai_internal
+    # Run Alembic migrations on startup then launch Uvicorn with 4 workers
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips='*'"
+
+  # ── Nginx Static SPA & Reverse Proxy ──────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: voxai_frontend_prod
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+    networks:
+      - voxai_internal
+
+volumes:
+  postgres_prod_data:
+    driver: local
+  redis_prod_data:
+    driver: local
+
+networks:
+  voxai_internal:
+    driver: bridge
