@@ -72,6 +72,7 @@ class ToolExecutor:
             "confirm_appointment": self._confirm_appointment,
             "reschedule_appointment": self._reschedule_appointment,
             "cancel_appointment": self._cancel_appointment,
+            "search_knowledge_base": self._search_knowledge_base,
             "escalate_to_human": self._escalate_to_human,
             "end_call": self._end_call,
         }
@@ -368,6 +369,57 @@ class ToolExecutor:
             success=True,
             message="Your appointment has been successfully cancelled.",
             data={"appointment_id": str(appt.id), "status": "CANCELLED"},
+        )
+
+    async def _search_knowledge_base(self, args: dict[str, Any]) -> ToolExecutionResult:
+        query = args.get("query", "").strip()
+        if not query:
+            return ToolExecutionResult(
+                tool_name="search_knowledge_base",
+                success=False,
+                message="No query provided to search knowledge base.",
+                data={"results": []},
+            )
+
+        from app.ai.rag.retriever import KnowledgeRetriever
+
+        retriever = KnowledgeRetriever()
+        results = await retriever.search(
+            session=self.session,
+            business_id=self.business_id,
+            tenant_id=self.tenant_id,
+            query=query,
+            top_k=3,
+            similarity_threshold=0.3,
+        )
+
+        if not results:
+            return ToolExecutionResult(
+                tool_name="search_knowledge_base",
+                success=True,
+                message="No matching information found in the knowledge base.",
+                data={"query": query, "found": False, "results": []},
+            )
+
+        context_snippets = [f"[{r.document_title}]: {r.content}" for r in results]
+        summary_text = "\n\n".join(context_snippets)
+
+        return ToolExecutionResult(
+            tool_name="search_knowledge_base",
+            success=True,
+            message=f"Found relevant information:\n{summary_text}",
+            data={
+                "query": query,
+                "found": True,
+                "matches": [
+                    {
+                        "document": r.document_title,
+                        "content": r.content,
+                        "similarity": r.similarity_score,
+                    }
+                    for r in results
+                ],
+            },
         )
 
     async def _escalate_to_human(self, args: dict[str, Any]) -> ToolExecutionResult:

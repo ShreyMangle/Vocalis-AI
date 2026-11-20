@@ -31,6 +31,7 @@ from app.api.v1 import (
     auth,
     business,
     calls,
+    documents,
     services,
     telephony,
     tenants,
@@ -62,8 +63,5 @@ api_router.include_router(calls.router)
 # Telephony webhooks & outbound dispatch: /api/v1/telephony
 api_router.include_router(telephony.router)
 
-# from app.api.v1 import knowledge
-# api_router.include_router(knowledge.router)  # Week 5
-
-# from app.api.v1 import calls
-# api_router.include_router(calls.router)      # Week 9
+# Knowledge Base & Documents (RAG): /api/v1/business/documents
+api_router.include_router(documents.router)

@@ -134,6 +134,23 @@ VOICE_AGENT_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "search_knowledge_base",
+            "description": "Search the business knowledge base, FAQs, policies, pricing, operating rules, directions, or doctor/staff info to answer customer questions accurately.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language search query or topic to look up in the business knowledge base.",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "escalate_to_human",
             "description": "Escalate the phone call to a human receptionist or doctor when the customer requests a human or inquiry is beyond AI capabilities.",
             "parameters": {

@@ -22,6 +22,9 @@ from app.models.service import Service
 # Week 4 — Voice Agent Configuration
 from app.models.agent import AgentConfig
 
+# Week 5 — Knowledge Base & RAG Documents (pgvector)
+from app.models.document import Document, DocumentChunk, DocumentStatus, DocumentType
+
 # Week 7 — Appointments & Scheduling
 from app.models.appointment import Appointment, AppointmentStatus
 
@@ -44,6 +47,11 @@ __all__ = [
     "Service",
     # Week 4
     "AgentConfig",
+    # Week 5
+    "Document",
+    "DocumentChunk",
+    "DocumentStatus",
+    "DocumentType",
     # Week 7
     "Appointment",
     "AppointmentStatus",
