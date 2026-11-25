@@ -458,7 +458,7 @@ class TestCurrentUserDependency:
         from app.models.tenant import Tenant
         from app.models.user import User
         from app.models.tenant_user import TenantUser
-        from app.models.business import Business
+        from app.models.business import Business, WorkingHours
         from app.models.agent import AgentConfig
 
         mock_session = AsyncMock()
@@ -503,12 +503,14 @@ class TestCurrentUserDependency:
             assert data["tenant"]["name"] == "Sunrise Wellness Center"
             assert "access_token" in data["tokens"]
 
-            # Verify Tenant, User, TenantUser, Business, and AgentConfig were all added
+            # Verify Tenant, User, TenantUser, Business, WorkingHours, and AgentConfig were all added
             types_added = [type(obj) for obj in added_objects]
             assert Tenant in types_added
             assert User in types_added
             assert TenantUser in types_added
             assert Business in types_added
+            assert WorkingHours in types_added
+            assert types_added.count(WorkingHours) == 7
             assert AgentConfig in types_added
         finally:
             app.dependency_overrides.pop(get_session, None)

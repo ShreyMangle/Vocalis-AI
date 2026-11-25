@@ -266,4 +266,35 @@ class TestAgentConfigAPI:
         names = [v["name"] for v in data]
         assert "Sarah" in names
         assert "Priya" in names
+        providers = {v["provider"] for v in data}
+        assert "edge" in providers
+
+    def test_patch_agent_accepts_free_edge_and_sarvam_providers(self, client, tokens, mock_agent):
+        mock_session = AsyncMock()
+        mock_res = MagicMock()
+        mock_res.scalar_one_or_none.return_value = mock_agent
+        mock_session.execute.return_value = mock_res
+
+        async def override():
+            yield mock_session
+
+        app.dependency_overrides[get_session] = override
+        try:
+            response = client.patch(
+                "/api/v1/agents",
+                json={"voice_provider": "edge", "voice_id": "en-IN-NeerjaNeural"},
+                headers={"Authorization": f"Bearer {tokens['admin']}"},
+            )
+            assert response.status_code == 200
+            assert mock_agent.voice_provider == "edge"
+
+            response_sarvam = client.patch(
+                "/api/v1/agents",
+                json={"voice_provider": "sarvam", "voice_id": "priya"},
+                headers={"Authorization": f"Bearer {tokens['admin']}"},
+            )
+            assert response_sarvam.status_code == 200
+            assert mock_agent.voice_provider == "sarvam"
+        finally:
+            app.dependency_overrides.pop(get_session, None)
 

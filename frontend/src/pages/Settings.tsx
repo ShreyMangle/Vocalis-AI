@@ -12,14 +12,41 @@ import {
   Radio,
 } from 'lucide-react';
 import { api } from '../lib/api';
-import type { Business, Service, WorkingHours } from '../types';
+import type { Business, Service, TelephonyStatus, WorkingHours } from '../types';
+
+const ALL_DAYS: WorkingHours['day_of_week'][] = [
+  'MONDAY',
+  'TUESDAY',
+  'WEDNESDAY',
+  'THURSDAY',
+  'FRIDAY',
+  'SATURDAY',
+  'SUNDAY',
+];
+
+const DEFAULT_SCHEDULE: WorkingHours[] = ALL_DAYS.map((day, idx) => ({
+  id: `default-${idx}`,
+  day_of_week: day,
+  open_time: day === 'SUNDAY' ? null : '09:00:00',
+  close_time: day === 'SUNDAY' ? null : '18:00:00',
+  is_closed: day === 'SUNDAY',
+}));
+
+const normalizeSchedule = (rows: WorkingHours[]): WorkingHours[] => {
+  const byDay = new Map(rows.map((r) => [r.day_of_week, r]));
+  return ALL_DAYS.map((day, idx) => {
+    const existing = byDay.get(day);
+    if (existing) return existing;
+    return DEFAULT_SCHEDULE[idx];
+  });
+};
 
 export const SettingsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'services' | 'telephony'>('profile');
   const [business, setBusiness] = useState<Business | null>(null);
-  const [workingHours, setWorkingHours] = useState<WorkingHours[]>([]);
+  const [workingHours, setWorkingHours] = useState<WorkingHours[]>(DEFAULT_SCHEDULE);
   const [services, setServices] = useState<Service[]>([]);
-  const [telephony, setTelephony] = useState<any>(null);
+  const [telephony, setTelephony] = useState<TelephonyStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -39,12 +66,12 @@ export const SettingsPage: React.FC = () => {
     try {
       const [biz, hrs, srv, tel] = await Promise.all([
         api.getBusiness().catch(() => null),
-        api.getWorkingHours().catch(() => ({ items: [] })),
+        api.getWorkingHours().catch(() => []),
         api.listServices().catch(() => ({ items: [], total: 0 })),
         api.getTelephonyStatus().catch(() => null),
       ]);
       setBusiness(biz);
-      setWorkingHours(hrs.items);
+      setWorkingHours(normalizeSchedule(Array.isArray(hrs) ? hrs : []));
       setServices(srv.items);
       setTelephony(tel);
     } finally {
@@ -74,8 +101,14 @@ export const SettingsPage: React.FC = () => {
     setSaving(true);
     setSaveSuccess(false);
     try {
-      const res = await api.updateWorkingHours(workingHours);
-      setWorkingHours(res.items);
+      const payload = workingHours.map((wh) => ({
+        day_of_week: wh.day_of_week,
+        open_time: wh.is_closed ? null : (wh.open_time || '09:00:00').slice(0, 5) + ':00',
+        close_time: wh.is_closed ? null : (wh.close_time || '18:00:00').slice(0, 5) + ':00',
+        is_closed: wh.is_closed,
+      }));
+      const res = await api.updateWorkingHours(payload);
+      setWorkingHours(normalizeSchedule(Array.isArray(res) ? res : payload as WorkingHours[]));
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err: unknown) {
@@ -267,10 +300,10 @@ export const SettingsPage: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <input
                         type="time"
-                        value={wh.open_time}
+                        value={(wh.open_time || '09:00').slice(0, 5)}
                         onChange={(e) => {
                           const updated = [...workingHours];
-                          updated[idx].open_time = e.target.value;
+                          updated[idx] = { ...updated[idx], open_time: e.target.value };
                           setWorkingHours(updated);
                         }}
                         className="px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs text-white"
@@ -278,10 +311,10 @@ export const SettingsPage: React.FC = () => {
                       <span className="text-slate-500">to</span>
                       <input
                         type="time"
-                        value={wh.close_time}
+                        value={(wh.close_time || '18:00').slice(0, 5)}
                         onChange={(e) => {
                           const updated = [...workingHours];
-                          updated[idx].close_time = e.target.value;
+                          updated[idx] = { ...updated[idx], close_time: e.target.value };
                           setWorkingHours(updated);
                         }}
                         className="px-2 py-1 bg-slate-950 border border-slate-700 rounded text-xs text-white"
@@ -353,8 +386,14 @@ export const SettingsPage: React.FC = () => {
               </h2>
               <p className="text-xs text-slate-400">VoBiz (India TRAI Primary) + Twilio Global Fallback</p>
             </div>
-            <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[10px] font-mono font-bold border border-emerald-500/20">
-              TRAI COMPLIANT
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                telephony?.is_configured
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                  : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+              }`}
+            >
+              {telephony?.is_configured ? 'CARRIER READY' : 'SIMULATION MODE'}
             </span>
           </div>
 
@@ -362,7 +401,26 @@ export const SettingsPage: React.FC = () => {
             <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-xl space-y-2">
               <span className="text-xs font-bold text-white block">Active Carrier Stream</span>
               <p className="text-xs text-slate-300">
-                Primary Telephony Provider: <span className="font-mono text-blue-400 font-bold">VoBiz</span>
+                Primary Telephony Provider:{' '}
+                <span className="font-mono text-blue-400 font-bold uppercase">
+                  {telephony?.provider || 'vobiz'}
+                </span>
+              </p>
+              <p className="text-xs text-slate-300">
+                Active Carrier Number:{' '}
+                <span className="font-mono text-slate-200">
+                  {telephony?.active_number || 'Not configured (simulation fallback)'}
+                </span>
+              </p>
+              <p className="text-[11px] text-slate-400">
+                Account Credentials:{' '}
+                <span className={telephony?.account_configured ? 'text-emerald-400' : 'text-amber-400'}>
+                  {telephony?.account_configured ? 'Configured' : 'Missing'}
+                </span>{' '}
+                • Phone Line:{' '}
+                <span className={telephony?.phone_number_configured ? 'text-emerald-400' : 'text-amber-400'}>
+                  {telephony?.phone_number_configured ? 'Configured' : 'Missing'}
+                </span>
               </p>
               <p className="text-[11px] text-slate-400">
                 Bidirectional Media Stream Endpoint:{' '}

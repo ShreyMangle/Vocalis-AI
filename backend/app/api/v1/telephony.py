@@ -96,18 +96,26 @@ async def get_telephony_status(
 ) -> TelephonyStatusResponse:
     """Returns whether VoBiz (primary for India) or Twilio credentials and numbers are configured."""
     provider = settings.DEFAULT_TELEPHONY_PROVIDER.lower()
+    vobiz_ok = bool(settings.VOBIZ_API_KEY and settings.VOBIZ_ACCOUNT_ID and settings.VOBIZ_PHONE_NUMBER)
+    twilio_ok = bool(settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN and settings.TWILIO_PHONE_NUMBER)
+
     if provider == "vobiz":
         has_account = bool(settings.VOBIZ_API_KEY and settings.VOBIZ_ACCOUNT_ID)
         has_phone = bool(settings.VOBIZ_PHONE_NUMBER)
+        active_number = settings.VOBIZ_PHONE_NUMBER
     else:
         has_account = bool(settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN)
         has_phone = bool(settings.TWILIO_PHONE_NUMBER)
+        active_number = settings.TWILIO_PHONE_NUMBER
 
     return TelephonyStatusResponse(
         provider=settings.DEFAULT_TELEPHONY_PROVIDER,
         is_configured=has_account and has_phone,
         phone_number_configured=has_phone,
         account_configured=has_account,
+        vobiz_configured=vobiz_ok,
+        twilio_configured=twilio_ok,
+        active_number=active_number,
     )
 
 

@@ -67,6 +67,7 @@ async def _get_tenant_business(session: AsyncSession, tenant_id: uuid.UUID) -> B
 )
 async def list_appointments(
     appt_status: AppointmentStatus | None = Query(default=None, description="Filter by status"),
+    status_filter: AppointmentStatus | None = Query(default=None, alias="status", description="Filter by status alias"),
     customer_phone: str | None = Query(default=None, description="Filter by customer phone"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -82,8 +83,9 @@ async def list_appointments(
         Appointment.is_deleted == False,  # noqa: E712
     )
 
-    if appt_status:
-        query = query.where(Appointment.status == appt_status)
+    effective_status = appt_status or status_filter
+    if effective_status:
+        query = query.where(Appointment.status == effective_status)
 
     if customer_phone:
         query = query.where(Appointment.customer_phone.ilike(f"%{customer_phone}%"))

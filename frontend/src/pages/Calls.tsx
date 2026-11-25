@@ -27,6 +27,7 @@ export const Calls: React.FC = () => {
   const [showOutboundModal, setShowOutboundModal] = useState(false);
   const [outboundPhone, setOutboundPhone] = useState('');
   const [outboundName, setOutboundName] = useState('');
+  const [outboundGreeting, setOutboundGreeting] = useState('');
   const [triggering, setTriggering] = useState(false);
 
   useEffect(() => {
@@ -48,19 +49,29 @@ export const Calls: React.FC = () => {
 
     setTriggering(true);
     try {
-      await api.triggerOutboundCall({
-        customer_phone: outboundPhone,
+      const res = await api.triggerOutboundCall({
+        to_phone: outboundPhone,
         customer_name: outboundName,
+        custom_greeting: outboundGreeting || undefined,
       });
-      alert('Outbound call initiated via VoBiz carrier stream!');
+      alert(`${res.message} (SID: ${res.call_sid || 'simulated'})`);
       setShowOutboundModal(false);
       setOutboundPhone('');
       setOutboundName('');
+      setOutboundGreeting('');
       await fetchCalls();
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Call dispatch failed');
     } finally {
       setTriggering(false);
+    }
+  };
+
+  const handleExportCsv = async () => {
+    try {
+      await api.exportCallsCsv();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'CSV export failed');
     }
   };
 
@@ -83,12 +94,20 @@ export const Calls: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={() => setShowOutboundModal(true)}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-lg shadow-blue-600/25"
-        >
-          <PhoneOutgoing className="w-4 h-4" /> Place Outbound Call
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExportCsv}
+            className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+          >
+            <Download className="w-4 h-4" /> Export CSV
+          </button>
+          <button
+            onClick={() => setShowOutboundModal(true)}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-lg shadow-blue-600/25"
+          >
+            <PhoneOutgoing className="w-4 h-4" /> Place Outbound Call
+          </button>
+        </div>
       </div>
 
       {/* Calls Table */}
@@ -103,7 +122,7 @@ export const Calls: React.FC = () => {
             <thead className="bg-slate-900/60 text-slate-400 border-b border-slate-800 uppercase font-semibold text-[10px] tracking-wider">
               <tr>
                 <th className="px-6 py-3">Direction</th>
-                <th className="px-6 py-3">Phone Numbers</th>
+                <th className="px-6 py-3">Caller Phone</th>
                 <th className="px-6 py-3">Duration</th>
                 <th className="px-6 py-3">Latency (STT/LLM/TTS)</th>
                 <th className="px-6 py-3">Sentiment</th>
@@ -112,7 +131,13 @@ export const Calls: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {calls.length === 0 ? (
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className="px-6 py-8 text-center text-slate-500">
+                    Loading call telemetry...
+                  </td>
+                </tr>
+              ) : calls.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-6 py-8 text-center text-slate-500">
                     No calls recorded yet. Make a call in the Sandbox or place an Outbound call.
@@ -130,14 +155,16 @@ export const Calls: React.FC = () => {
                       <span>{call.direction}</span>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="font-mono text-slate-300">{call.from_number}</div>
-                      <div className="font-mono text-[10px] text-slate-400">to {call.to_number}</div>
+                      <div className="font-mono text-slate-200">{call.caller_phone}</div>
+                      <div className="font-mono text-[10px] text-slate-400">
+                        {new Date(call.started_at || call.created_at).toLocaleString()}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-slate-300 font-mono">
                       {Math.floor(call.duration_seconds / 60)}m {call.duration_seconds % 60}s
                     </td>
                     <td className="px-6 py-4 text-slate-300 font-mono text-[11px]">
-                      {call.stt_latency_ms || 140}ms / {call.llm_latency_ms || 280}ms / {call.tts_latency_ms || 40}ms
+                      {call.stt_latency_ms ?? 0}ms / {call.llm_latency_ms ?? 0}ms / {call.tts_latency_ms ?? 0}ms
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-1.5 text-xs text-slate-300">
@@ -180,33 +207,46 @@ export const Calls: React.FC = () => {
               <div>
                 <h2 className="text-base font-bold text-white">Call Conversation Transcript</h2>
                 <p className="text-xs text-slate-400 font-mono">
-                  {selectedCall.from_number} • {new Date(selectedCall.created_at).toLocaleString()}
+                  {selectedCall.caller_phone} • {new Date(selectedCall.started_at || selectedCall.created_at).toLocaleString()} • $
+                  {(selectedCall.cost_cents / 100).toFixed(2)}
                 </p>
               </div>
               <button
                 onClick={() => setSelectedCall(null)}
-                className="text-slate-400 hover:text-white text-xs font-semibold px-2 py-1 bg-slate-800 rounded"
+                className="text-slate-400 hover:text-white text-xs font-semibold px-2 py-1 bg-slate-800 rounded cursor-pointer"
               >
                 Close
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-3 p-2 bg-slate-900/50 rounded-xl">
-              {selectedCall.transcript ? (
-                <div className="whitespace-pre-wrap text-xs text-slate-300 leading-relaxed font-mono">
-                  {selectedCall.transcript}
-                </div>
+            <div className="flex-1 overflow-y-auto space-y-2.5 p-3 bg-slate-900/50 rounded-xl">
+              {Array.isArray(selectedCall.transcript) && selectedCall.transcript.length > 0 ? (
+                selectedCall.transcript.map((turn, idx) => (
+                  <div
+                    key={idx}
+                    className={`p-3 rounded-xl text-xs ${
+                      turn.role === 'user'
+                        ? 'bg-blue-600/15 border border-blue-500/30 text-blue-100 ml-6'
+                        : 'bg-slate-800/80 border border-slate-700 text-slate-200 mr-6'
+                    }`}
+                  >
+                    <span className="block text-[10px] font-bold uppercase tracking-wider opacity-60 mb-1">
+                      {turn.role === 'user' ? 'Caller' : 'Voice AI'}
+                    </span>
+                    <p className="leading-relaxed">{turn.content}</p>
+                  </div>
+                ))
               ) : (
                 <p className="text-xs text-slate-500 italic text-center py-6">
-                  No transcript available for this call.
+                  No transcript turns recorded for this call.
                 </p>
               )}
             </div>
 
-            {selectedCall.call_summary && (
+            {selectedCall.notes && (
               <div className="p-3 bg-blue-950/20 border border-blue-500/20 rounded-xl text-xs space-y-1">
-                <span className="font-bold text-blue-300">AI Call Summary:</span>
-                <p className="text-slate-300 text-[11px]">{selectedCall.call_summary}</p>
+                <span className="font-bold text-blue-300">AI Call Notes ({selectedCall.intent || 'Inquiry'}):</span>
+                <p className="text-slate-300 text-[11px]">{selectedCall.notes}</p>
               </div>
             )}
           </div>
@@ -240,6 +280,17 @@ export const Calls: React.FC = () => {
                   onChange={(e) => setOutboundPhone(e.target.value)}
                   placeholder="+919876543210"
                   className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Custom Opening Phrase (Optional)</label>
+                <input
+                  type="text"
+                  value={outboundGreeting}
+                  onChange={(e) => setOutboundGreeting(e.target.value)}
+                  placeholder="Hello! Calling to confirm your appointment tomorrow."
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white"
                 />
               </div>
 

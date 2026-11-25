@@ -127,8 +127,8 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str | None = None
 
     # Default LLM to use when creating a new agent
-    DEFAULT_LLM_PROVIDER: str = "groq"   # groq is free, great for development
-    DEFAULT_LLM_MODEL: str = "llama-3.1-70b-versatile"
+    DEFAULT_LLM_PROVIDER: str = "groq"   # groq is free, ultra-low latency
+    DEFAULT_LLM_MODEL: str = "llama-3.3-70b-versatile"
 
     # =========================================================================
     # SPEECH PROVIDERS
@@ -136,9 +136,11 @@ class Settings(BaseSettings):
     DEEPGRAM_API_KEY: str | None = None
     CARTESIA_API_KEY: str | None = None
     ELEVENLABS_API_KEY: str | None = None
+    SARVAM_API_KEY: str | None = None
 
-    DEFAULT_STT_PROVIDER: str = "deepgram"
-    DEFAULT_TTS_PROVIDER: str = "edge"   # edge-tts is free, for development
+    DEFAULT_STT_PROVIDER: str = "groq"   # groq whisper is free tier; deepgram supported
+    DEFAULT_TTS_PROVIDER: str = "edge"   # edge-tts is 100% free unlimited
+    DEFAULT_TTS_VOICE: str = "en-IN-NeerjaNeural"
 
     # =========================================================================
     # TELEPHONY (VoBiz primary for India, Twilio global fallback)

@@ -11,10 +11,14 @@ import type {
   CallStats,
   Document,
   DocumentChunk,
+  OutboundCallResult,
+  PromptPreview,
   Service,
+  TelephonyStatus,
   Tenant,
   TenantMember,
   User,
+  VoiceCatalogItem,
   WorkingHours,
 } from '../types';
 
@@ -119,13 +123,15 @@ class ApiClient {
   }
 
   async getWorkingHours() {
-    return this.request<{ items: WorkingHours[] }>('/api/v1/business/working-hours');
+    return this.request<WorkingHours[]>('/api/v1/business/working-hours');
   }
 
-  async updateWorkingHours(items: Partial<WorkingHours>[]) {
-    return this.request<{ items: WorkingHours[] }>('/api/v1/business/working-hours', {
+  async updateWorkingHours(
+    schedule: { day_of_week: WorkingHours['day_of_week']; open_time: string | null; close_time: string | null; is_closed: boolean }[]
+  ) {
+    return this.request<WorkingHours[]>('/api/v1/business/working-hours', {
       method: 'PUT',
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({ schedule }),
     });
   }
 
@@ -157,24 +163,24 @@ class ApiClient {
 
   // ── Agent Configuration ───────────────────────────────────────────────────
   async getAgentConfig() {
-    return this.request<AgentConfig>('/api/v1/agents/current');
+    return this.request<AgentConfig>('/api/v1/agents');
   }
 
   async updateAgentConfig(data: Partial<AgentConfig>) {
-    return this.request<AgentConfig>('/api/v1/agents/current', {
+    return this.request<AgentConfig>('/api/v1/agents', {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
 
   async getVoices() {
-    return this.request<{ items: { id: string; name: string; provider: string; gender: string; sample_url?: string }[] }>(
-      '/api/v1/agents/voices'
-    );
+    return this.request<VoiceCatalogItem[]>('/api/v1/agents/voices');
   }
 
   async previewPrompt() {
-    return this.request<{ rendered_prompt: string; variables: Record<string, string> }>('/api/v1/agents/prompt/preview');
+    return this.request<PromptPreview>('/api/v1/agents/preview-prompt', {
+      method: 'POST',
+    });
   }
 
   // ── Knowledge Base (RAG) ──────────────────────────────────────────────────
@@ -250,8 +256,12 @@ class ApiClient {
   }
 
   async getAvailableSlots(date: string, duration_minutes = 30) {
-    return this.request<{ slots: string[]; date: string }>(
-      `/api/v1/appointments/slots?date=${encodeURIComponent(date)}&duration_minutes=${duration_minutes}`
+    return this.request<{
+      date: string;
+      business_timezone: string;
+      slots: { start_time: string; end_time: string; formatted_time: string }[];
+    }>(
+      `/api/v1/appointments/availability/slots?target_date=${encodeURIComponent(date)}&duration_minutes=${duration_minutes}`
     );
   }
 
@@ -260,25 +270,42 @@ class ApiClient {
     return this.request<{ items: Call[]; total: number }>(`/api/v1/calls?limit=${limit}&offset=${offset}`);
   }
 
-  async getCallStats(days = 30) {
-    return this.request<CallStats>(`/api/v1/calls/stats?days=${days}`);
+  async getCallStats() {
+    return this.request<CallStats>('/api/v1/calls/analytics/stats');
   }
 
-  async triggerOutboundCall(data: { customer_phone: string; customer_name: string; appointment_id?: string }) {
-    return this.request<{ call_id: string; status: string; message: string }>('/api/v1/telephony/outbound', {
+  async exportCallsCsv(): Promise<void> {
+    const res = await fetch(`${BASE_URL}/api/v1/calls/export/csv`, {
+      headers: this.getHeaders(true),
+    });
+    if (!res.ok) {
+      throw new Error(`CSV export failed (HTTP ${res.status})`);
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'voxai_call_report.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  }
+
+  async triggerOutboundCall(data: {
+    to_phone: string;
+    customer_name?: string;
+    appointment_id?: string;
+    custom_greeting?: string;
+  }) {
+    return this.request<OutboundCallResult>('/api/v1/telephony/outbound-call', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   async getTelephonyStatus() {
-    return this.request<{
-      provider: string;
-      vobiz_configured: boolean;
-      twilio_configured: boolean;
-      active_number: string;
-      status: string;
-    }>('/api/v1/telephony/status');
+    return this.request<TelephonyStatus>('/api/v1/telephony/status');
   }
 
   // ── Tenants ───────────────────────────────────────────────────────────────

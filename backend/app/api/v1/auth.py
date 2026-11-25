@@ -42,7 +42,7 @@ CONCEPT: Status Codes
 
 import re
 import uuid
-from datetime import UTC
+from datetime import UTC, time
 
 import structlog
 from fastapi import APIRouter, Depends, status
@@ -67,7 +67,7 @@ from app.core.security import (
 )
 from app.db.session import get_session
 from app.models.agent import AgentConfig
-from app.models.business import Business
+from app.models.business import Business, DayOfWeek, WorkingHours
 from app.models.tenant import Tenant
 from app.models.tenant_user import TenantUser, UserRole
 from app.models.user import User
@@ -223,7 +223,7 @@ async def register(
     )
     session.add(membership)
 
-    # ── Step 5: Automatically create Business profile and AgentConfig ─────────
+    # ── Step 5: Automatically create Business profile, schedule & AgentConfig ─
     business = Business(
         tenant_id=tenant.id,
         name=body.business_name,
@@ -233,11 +233,32 @@ async def register(
     session.add(business)
     await session.flush()
 
+    default_open = time(9, 0)
+    default_close = time(18, 0)
+    for day in DayOfWeek:
+        is_sunday = day == DayOfWeek.SUNDAY
+        session.add(
+            WorkingHours(
+                tenant_id=tenant.id,
+                business_id=business.id,
+                day_of_week=day,
+                open_time=None if is_sunday else default_open,
+                close_time=None if is_sunday else default_close,
+                is_closed=is_sunday,
+            )
+        )
+
     agent = AgentConfig(
         tenant_id=tenant.id,
         business_id=business.id,
         name=f"{body.business_name} Assistant",
         greeting_message=f"Hello! Thank you for calling {body.business_name}. How can I assist you today?",
+        voice_provider=settings.DEFAULT_TTS_PROVIDER,
+        voice_id=settings.DEFAULT_TTS_VOICE,
+        llm_provider=settings.DEFAULT_LLM_PROVIDER,
+        llm_model=settings.DEFAULT_LLM_MODEL,
+        primary_language="en-IN",
+        supported_languages=["en-IN", "hi-IN"],
     )
     session.add(agent)
 
