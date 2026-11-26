@@ -189,6 +189,20 @@ async def request_id_middleware(request: Request, call_next):
     return response
 
 
+# ── 3. Security Headers Middleware ───────────────────────────────────────────
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Enforce defense-in-depth security headers on all HTTP responses."""
+    response: Response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if settings.is_production:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
 # =============================================================================
 # GLOBAL ERROR HANDLERS
 # =============================================================================
@@ -228,8 +242,15 @@ async def voxai_exception_handler(request: Request, exc: VoxAIError) -> JSONResp
         details=exc.details,
     )
 
+    response_headers = {}
+    if exc.code == "RATE_LIMIT_EXCEEDED" and exc.details:
+        response_headers["X-RateLimit-Limit"] = str(exc.details.get("limit", 60))
+        response_headers["X-RateLimit-Remaining"] = "0"
+        response_headers["Retry-After"] = str(exc.details.get("retry_after", 60))
+
     return JSONResponse(
         status_code=exc.status_code,
+        headers=response_headers,
         content={
             "error": {
                 "code": exc.code,

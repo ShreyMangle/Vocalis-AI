@@ -69,6 +69,16 @@ from app.schemas.call import (
     CallResponse,
     CallStatsResponse,
 )
+from app.schemas.document import (
+    DocumentChunkResponse,
+    DocumentListResponse,
+    DocumentResponse,
+    FAQCreateRequest,
+    FAQItem,
+    KnowledgeQueryRequest,
+    KnowledgeQueryResponse,
+    KnowledgeSearchResult,
+)
 from app.schemas.service import (
     ServiceCreateRequest,
     ServiceListResponse,
@@ -124,6 +134,15 @@ __all__ = [
     "AgentConfigResponse",
     "PromptPreviewResponse",
     "VoiceCatalogItem",
+    # Knowledge Base & Documents
+    "DocumentResponse",
+    "DocumentListResponse",
+    "DocumentChunkResponse",
+    "FAQItem",
+    "FAQCreateRequest",
+    "KnowledgeQueryRequest",
+    "KnowledgeSearchResult",
+    "KnowledgeQueryResponse",
     # Appointments
     "AppointmentCreateRequest",
     "AppointmentUpdateRequest",

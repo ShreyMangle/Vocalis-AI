@@ -1,14 +1,32 @@
-FROM node:20-alpine
+# =============================================================================
+# Stage 1: Build Frontend Assets
+# =============================================================================
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files first (layer caching — same as backend Dockerfile)
+# Copy package descriptors first for Docker layer caching
 COPY package*.json ./
 RUN npm install
 
-# Copy source (mounted as volume in dev, so this is mainly for production builds)
+# Copy source code and build production bundle
 COPY . .
+RUN npm run build
 
-EXPOSE 5173
+# =============================================================================
+# Stage 2: Production Nginx Server
+# =============================================================================
+FROM nginx:alpine AS runtime
 
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+# Remove default nginx static assets
+RUN rm -rf /usr/share/nginx/html/*
+
+# Copy compiled SPA dist from builder stage
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Copy custom Nginx configuration with reverse proxy & WebSocket upgrade
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

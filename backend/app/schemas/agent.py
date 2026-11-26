@@ -47,12 +47,12 @@ class AgentConfigCreateRequest(BaseModel):
         description="Phrase spoken when utterance is not understood",
     )
     voice_provider: str = Field(
-        default="cartesia",
-        pattern="^(cartesia|deepgram|elevenlabs|azure)$",
-        description="TTS provider platform",
+        default="edge",
+        pattern="^(edge|cartesia|deepgram|sarvam|elevenlabs|azure)$",
+        description="TTS provider platform (edge = free neural TTS)",
     )
     voice_id: str = Field(
-        default="a0e99841-438c-4a64-b679-ae501e7d6091",
+        default="en-IN-NeerjaNeural",
         max_length=150,
         description="Provider-specific voice ID",
     )
@@ -63,12 +63,12 @@ class AgentConfigCreateRequest(BaseModel):
         description="Speech playback speed multiplier",
     )
     llm_provider: str = Field(
-        default="openai",
+        default="groq",
         pattern="^(openai|groq|anthropic|gemini)$",
         description="LLM provider platform",
     )
     llm_model: str = Field(
-        default="gpt-4o-mini",
+        default="llama-3.3-70b-versatile",
         max_length=100,
         description="Target model identifier",
     )
@@ -119,7 +119,7 @@ class AgentConfigUpdateRequest(BaseModel):
     system_prompt: str | None = Field(default=None, max_length=5000)
     greeting_message: str | None = Field(default=None, max_length=1000)
     fallback_message: str | None = Field(default=None, max_length=500)
-    voice_provider: str | None = Field(default=None, pattern="^(cartesia|deepgram|elevenlabs|azure)$")
+    voice_provider: str | None = Field(default=None, pattern="^(edge|cartesia|deepgram|sarvam|elevenlabs|azure)$")
     voice_id: str | None = Field(default=None, max_length=150)
     speech_speed: float | None = Field(default=None, ge=0.5, le=2.0)
     llm_provider: str | None = Field(default=None, pattern="^(openai|groq|anthropic|gemini)$")

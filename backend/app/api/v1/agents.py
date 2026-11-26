@@ -41,8 +41,38 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/agents", tags=["Voice Agent Studio"])
 
-# Curated catalog of production TTS voices
+# Curated catalog of production & free-tier TTS voices
 VOICE_CATALOG: list[VoiceCatalogItem] = [
+    VoiceCatalogItem(
+        provider="edge",
+        voice_id="en-IN-NeerjaNeural",
+        name="Neerja (Free Neural)",
+        gender="Female",
+        accent="Indian English",
+        description="100% free natural Indian English voice via Edge Neural TTS with zero API cost.",
+        sample_preview_text="Hello! Thank you for calling. How may I assist you with your booking today?",
+        recommended=True,
+    ),
+    VoiceCatalogItem(
+        provider="edge",
+        voice_id="hi-IN-SwaraNeural",
+        name="Swara (Free Hindi/Hinglish)",
+        gender="Female",
+        accent="Hindi (India)",
+        description="100% free expressive Hindi & Hinglish neural voice ideal for India callers.",
+        sample_preview_text="Namaste! Main aapki kaise madad kar sakti hoon?",
+        recommended=True,
+    ),
+    VoiceCatalogItem(
+        provider="edge",
+        voice_id="hi-IN-MadhurNeural",
+        name="Madhur (Free Hindi Male)",
+        gender="Male",
+        accent="Hindi (India)",
+        description="100% free warm male Hindi neural voice for clear phone reception.",
+        sample_preview_text="Namaste! Batayein, main aapke liye kya appointment book kar sakta hoon?",
+        recommended=False,
+    ),
     VoiceCatalogItem(
         provider="cartesia",
         voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
@@ -72,6 +102,16 @@ VOICE_CATALOG: list[VoiceCatalogItem] = [
         description="Polite, friendly Indian English accent optimized for India domestic business operations.",
         sample_preview_text="Namaste, welcome to Sunrise Clinic. I am Priya, how can I assist you with an appointment?",
         recommended=True,
+    ),
+    VoiceCatalogItem(
+        provider="sarvam",
+        voice_id="priya",
+        name="Sarvam Priya (bulbul:v3)",
+        gender="Female",
+        accent="Indian Multilingual",
+        description="Indian bilingual voice optimized for natural Hinglish & regional phone cadence.",
+        sample_preview_text="Haan bilkul, main aapka appointment confirm kar deti hoon.",
+        recommended=False,
     ),
     VoiceCatalogItem(
         provider="deepgram",

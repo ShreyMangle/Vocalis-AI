@@ -42,7 +42,7 @@ CONCEPT: Status Codes
 
 import re
 import uuid
-from datetime import UTC
+from datetime import UTC, time
 
 import structlog
 from fastapi import APIRouter, Depends, status
@@ -57,6 +57,7 @@ from app.core.exceptions import (
     ConflictError,
     NotFoundError,
 )
+from app.core.rate_limit import rate_limit
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -65,6 +66,8 @@ from app.core.security import (
     verify_password,
 )
 from app.db.session import get_session
+from app.models.agent import AgentConfig
+from app.models.business import Business, DayOfWeek, WorkingHours
 from app.models.tenant import Tenant
 from app.models.tenant_user import TenantUser, UserRole
 from app.models.user import User
@@ -144,6 +147,7 @@ def _build_token_pair(user_id: uuid.UUID, tenant_id: uuid.UUID, role: str) -> To
     "/register",
     response_model=RegisterResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, key_prefix="rl_reg"))],
     summary="Register a new business",
     description="""
     Creates a new **Tenant** (business organization) and **User** (owner) in one step.
@@ -218,15 +222,54 @@ async def register(
         is_active=True,
     )
     session.add(membership)
-    # The session.commit() in get_session() will commit all three inserts atomically
 
-    # ── Step 5: Generate tokens ────────────────────────────────────────────────
+    # ── Step 5: Automatically create Business profile, schedule & AgentConfig ─
+    business = Business(
+        tenant_id=tenant.id,
+        name=body.business_name,
+        industry="healthcare",
+        timezone="Asia/Kolkata",
+    )
+    session.add(business)
+    await session.flush()
+
+    default_open = time(9, 0)
+    default_close = time(18, 0)
+    for day in DayOfWeek:
+        is_sunday = day == DayOfWeek.SUNDAY
+        session.add(
+            WorkingHours(
+                tenant_id=tenant.id,
+                business_id=business.id,
+                day_of_week=day,
+                open_time=None if is_sunday else default_open,
+                close_time=None if is_sunday else default_close,
+                is_closed=is_sunday,
+            )
+        )
+
+    agent = AgentConfig(
+        tenant_id=tenant.id,
+        business_id=business.id,
+        name=f"{body.business_name} Assistant",
+        greeting_message=f"Hello! Thank you for calling {body.business_name}. How can I assist you today?",
+        voice_provider=settings.DEFAULT_TTS_PROVIDER,
+        voice_id=settings.DEFAULT_TTS_VOICE,
+        llm_provider=settings.DEFAULT_LLM_PROVIDER,
+        llm_model=settings.DEFAULT_LLM_MODEL,
+        primary_language="en-IN",
+        supported_languages=["en-IN", "hi-IN"],
+    )
+    session.add(agent)
+
+    # ── Step 6: Generate tokens ────────────────────────────────────────────────
     tokens = _build_token_pair(user.id, tenant.id, UserRole.OWNER.value)
 
     logger.info(
         "Registration complete",
         user_id=str(user.id),
         tenant_id=str(tenant.id),
+        business_id=str(business.id),
     )
 
     return RegisterResponse(
@@ -244,6 +287,7 @@ async def register(
     "/login",
     response_model=LoginResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(rate_limit(max_requests=20, window_seconds=60, key_prefix="rl_login"))],
     summary="Login with email and password",
 )
 async def login(

@@ -115,7 +115,7 @@ class TestAppointmentsAPI:
         app.dependency_overrides[get_session] = override
         try:
             response = client.get(
-                "/api/v1/appointments",
+                "/api/v1/appointments?status=CONFIRMED",
                 headers={"Authorization": f"Bearer {tokens['staff']}"},
             )
             assert response.status_code == 200

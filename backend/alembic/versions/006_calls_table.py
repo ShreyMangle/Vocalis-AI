@@ -22,13 +22,19 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # ── Enums ────────────────────────────────────────────────────────────────
-    op.execute("CREATE TYPE calldirection AS ENUM ('INBOUND', 'OUTBOUND')")
     op.execute(
-        "CREATE TYPE callstatus AS ENUM ("
-        "'IN_PROGRESS', 'COMPLETED', 'BUSY', 'NO_ANSWER', 'FAILED'"
-        ")"
+        "DO $$ BEGIN "
+        "IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'calldirection') THEN "
+        "CREATE TYPE calldirection AS ENUM ('INBOUND', 'OUTBOUND'); "
+        "END IF; "
+        "IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'callstatus') THEN "
+        "CREATE TYPE callstatus AS ENUM ('IN_PROGRESS', 'COMPLETED', 'BUSY', 'NO_ANSWER', 'FAILED'); "
+        "END IF; "
+        "IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'callsentiment') THEN "
+        "CREATE TYPE callsentiment AS ENUM ('POSITIVE', 'NEUTRAL', 'NEGATIVE'); "
+        "END IF; "
+        "END $$;"
     )
-    op.execute("CREATE TYPE callsentiment AS ENUM ('POSITIVE', 'NEUTRAL', 'NEGATIVE')")
 
     # ── calls table ──────────────────────────────────────────────────────────
     op.create_table(
@@ -58,13 +64,13 @@ def upgrade() -> None:
         sa.Column("caller_phone", sa.String(50), nullable=False, index=True),
         sa.Column(
             "direction",
-            sa.Enum("INBOUND", "OUTBOUND", name="calldirection"),
+            sa.Enum("INBOUND", "OUTBOUND", name="calldirection", create_type=False),
             nullable=False,
             server_default="INBOUND",
         ),
         sa.Column(
             "status",
-            sa.Enum("IN_PROGRESS", "COMPLETED", "BUSY", "NO_ANSWER", "FAILED", name="callstatus"),
+            sa.Enum("IN_PROGRESS", "COMPLETED", "BUSY", "NO_ANSWER", "FAILED", name="callstatus", create_type=False),
             nullable=False,
             server_default="COMPLETED",
             index=True,
@@ -76,7 +82,7 @@ def upgrade() -> None:
         sa.Column("transcript", sa.JSON(), nullable=False, server_default="[]"),
         sa.Column(
             "sentiment",
-            sa.Enum("POSITIVE", "NEUTRAL", "NEGATIVE", name="callsentiment"),
+            sa.Enum("POSITIVE", "NEUTRAL", "NEGATIVE", name="callsentiment", create_type=False),
             nullable=False,
             server_default="NEUTRAL",
             index=True,

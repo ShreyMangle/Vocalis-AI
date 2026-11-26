@@ -134,6 +134,9 @@ services:
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
       VOBIZ_API_KEY: ${VOBIZ_API_KEY:-}
+      VOBIZ_ACCOUNT_ID: ${VOBIZ_ACCOUNT_ID:-}
+      VOBIZ_PHONE_NUMBER: ${VOBIZ_PHONE_NUMBER:-}
+      VOBIZ_BASE_URL: ${VOBIZ_BASE_URL:-https://api.vobiz.ai/v1}
     depends_on:
       postgres:
         condition: service_healthy  # Wait until postgres is healthy before starting
@@ -157,6 +160,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      target: builder
     container_name: voxai_frontend
     restart: unless-stopped
     ports:

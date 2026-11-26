@@ -20,6 +20,11 @@ class OutboundCallRequest(BaseModel):
         description="Recipient E.164 phone number",
         examples=["+919876543210"],
     )
+    customer_name: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Optional customer display name for outbound call personalization",
+    )
     appointment_id: uuid.UUID | None = Field(
         default=None,
         description="Optional appointment ID to discuss or confirm",
@@ -46,4 +51,7 @@ class TelephonyStatusResponse(BaseModel):
     is_configured: bool
     phone_number_configured: bool
     account_configured: bool
+    vobiz_configured: bool = False
+    twilio_configured: bool = False
+    active_number: str | None = None
 
