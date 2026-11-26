@@ -317,6 +317,7 @@ async def carrier_voice_stream(
     customer_phone = "+919876543210"
     appt_uuid = None
     greeting_override = None
+    agent_config = None
 
     # Load operational entities from database (gracefully fallback if DB offline)
     try:
@@ -370,6 +371,7 @@ async def carrier_voice_stream(
         business_name=business_name,
         appointment_id=appt_uuid,
         is_sandbox=False,
+        agent_config=agent_config,
     )
 
     pipeline = VoicePipeline(
@@ -427,6 +429,7 @@ async def browser_sandbox_stream(
     business_id = uuid.uuid4()
     business_name = "Sandbox Medical Clinic"
     greeting_override = None
+    agent_config = None
 
     try:
         async with SessionFactory() as db:
@@ -466,6 +469,7 @@ async def browser_sandbox_stream(
         customer_name="Simulator Test Caller",
         business_name=business_name,
         is_sandbox=True,
+        agent_config=agent_config,
     )
 
     pipeline = VoicePipeline(
@@ -485,13 +489,17 @@ async def browser_sandbox_stream(
             if event == "sandbox_text":
                 text = data.get("text", "").strip()
                 if text:
-                    await pipeline.process_utterance(text)
+                    pipeline.schedule_utterance(text)
 
             elif event == "sandbox_audio":
                 payload = data.get("payload")
                 if payload:
                     chunk = base64.b64decode(payload)
                     await pipeline.handle_audio_chunk(chunk)
+
+            elif event in ("barge_in", "sandbox_clear"):
+                call_session.cancel_active_turn()
+                await pipeline._clear_remote_audio_buffer()
 
             elif event == "stop":
                 break
